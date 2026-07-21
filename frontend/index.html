@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>icp-lab — outreach analytics</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>icp-lab</h1>
+  <nav id="tabs">
+    <button data-tab="overview" class="active">Overview</button>
+    <button data-tab="breakdowns">Breakdowns</button>
+    <button data-tab="contacts">Contacts</button>
+  </nav>
+  <div class="spacer"></div>
+  <button class="logout" id="logout">Log out</button>
+</header>
+
+<main>
+  <section id="tab-overview">
+    <div class="kpis" id="kpis"><div class="loading">Loading…</div></div>
+
+    <div class="card">
+      <h2>Funnel</h2>
+      <div class="sub">All contact rows count as "contacted" (incl. manual links). Clicked = at least one tracking-link visit.</div>
+      <div class="funnel" id="funnel"></div>
+    </div>
+
+    <div class="card">
+      <h2>By channel</h2>
+      <div id="channel-table"></div>
+    </div>
+
+    <div class="card">
+      <div class="chart-head">
+        <h2 style="margin:0">Over time</h2>
+        <div class="spacer"></div>
+        <div class="seg" id="granularity">
+          <button data-g="week" class="active">Weekly</button>
+          <button data-g="month">Monthly</button>
+        </div>
+      </div>
+      <div class="sub">Response rate per period (top), contacts reached (bottom). Rows without a contact date are excluded here.</div>
+      <div id="timeseries"><div class="loading">Loading…</div></div>
+    </div>
+  </section>
+
+  <section id="tab-breakdowns" hidden>
+    <div class="card">
+      <div class="chart-head">
+        <h2 style="margin:0">Response rate by dimension</h2>
+        <div class="spacer"></div>
+        <div class="seg" id="dim-picker"></div>
+      </div>
+      <div class="sub">Every group shows its sample size — a great rate on n=3 is noise, not signal.</div>
+      <div class="legend">
+        <span class="key"><span class="swatch" style="background:var(--series-1)"></span>Response rate</span>
+        <span class="key"><span class="swatch" style="background:var(--series-2)"></span>Click rate</span>
+      </div>
+      <div id="breakdown-table"><div class="loading">Loading…</div></div>
+    </div>
+  </section>
+
+  <section id="tab-contacts" hidden>
+    <div class="card">
+      <div class="toolbar">
+        <input type="search" id="contact-search" placeholder="Filter by name, company, title, role…">
+        <span class="count" id="contact-count"></span>
+      </div>
+      <div class="contacts-wrap" id="contacts-table"><div class="loading">Loading…</div></div>
+    </div>
+  </section>
+</main>
+
+<div id="tooltip" hidden></div>
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

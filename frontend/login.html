@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>icp-lab — sign in</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+<form class="login-card" id="login-form">
+  <h1>icp-lab</h1>
+  <p>Outreach analytics — sign in to continue.</p>
+  <input type="password" id="password" placeholder="Password" autocomplete="current-password" autofocus required>
+  <button type="submit">Sign in</button>
+  <div class="err" id="err"></div>
+</form>
+<script>
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('err');
+  err.textContent = '';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: document.getElementById('password').value }),
+    });
+    if (res.ok) { location.href = '/'; return; }
+    const body = await res.json().catch(() => ({}));
+    err.textContent = body.detail || 'Login failed.';
+  } catch {
+    err.textContent = 'Network error — try again.';
+  }
+});
+</script>
+</body>
+</html>
