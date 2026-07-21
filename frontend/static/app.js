@@ -499,6 +499,15 @@ function renderEnrichForm() {
     <span class="chip">${num(c.visit_count)} visit${c.visit_count === 1 ? '' : 's'}</span>`;
   form.appendChild(head);
 
+  // open LinkedIn in a separate window (not a tab) sized for a profile
+  const lnk = head.querySelector('.linkedin-btn');
+  if (lnk) {
+    lnk.addEventListener('click', (e) => {
+      e.preventDefault();
+      window.open(lnk.href, '_blank', 'noopener,noreferrer,width=1250,height=950');
+    });
+  }
+
   const grid = document.createElement('div');
   grid.className = 'field-grid';
   const inputs = {};
