@@ -208,4 +208,5 @@ def enrich_meta():
         "seniorities": distinct("seniority"),
         "industries": distinct("company_industry"),
         "countries": distinct("country"),
+        "titles": distinct("title"),
     }

@@ -389,14 +389,14 @@ const ENRICH_KEY_FIELDS = ['title', 'seniority', 'company_name', 'company_size',
 const ENRICH_FORM = [
   ['first_name', 'First name', 'text'],
   ['last_name', 'Last name', 'text'],
-  ['title', 'Title', 'text'],
+  ['title', 'Title', 'combo', 'titles'],
   ['seniority', 'Seniority', 'combo', 'seniorities'],
   ['company_name', 'Company', 'text', 'dl-orgs'],
   ['company_size', 'Company size', 'number'],
   ['company_industry', 'Industry', 'text', 'dl-industries'],
   ['city', 'City', 'text'],
   ['state', 'State', 'text'],
-  ['country', 'Country', 'text', 'dl-countries'],
+  ['country', 'Country', 'combo', 'countries'],
   ['years_at_company', 'Years at company', 'number'],
   ['connection_degree', 'Connection', 'select', ['', '1st', '2nd', '3rd']],
   ['premium', 'Premium', 'bool'],
@@ -421,9 +421,7 @@ async function loadEnrichMeta() {
       document.getElementById(id).innerHTML =
         values.map((v) => `<option value="${esc(v)}"></option>`).join('');
     };
-    fill('dl-seniorities', enrichMeta.seniorities);
     fill('dl-industries', enrichMeta.industries);
-    fill('dl-countries', enrichMeta.countries);
     document.getElementById('dl-orgs').innerHTML = enrichMeta.orgs.map((o) =>
       `<option value="${esc(o.company_name)}" label="${esc(`${o.n} contact${o.n > 1 ? 's' : ''}${o.company_industry ? ' · ' + o.company_industry : ''}`)}"></option>`
     ).join('');
