@@ -428,7 +428,8 @@ async function loadEnrichMeta() {
       `<option value="${esc(o.company_name)}" label="${esc(`${o.n} contact${o.n > 1 ? 's' : ''}${o.company_industry ? ' · ' + o.company_industry : ''}`)}"></option>`
     ).join('');
   } catch (err) {
-    document.getElementById('enrich-list').innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
+    // don't clobber the contact list — suggestions are an enhancement
+    toast(`Couldn't load org suggestions: ${err.message}`, true);
   }
 }
 
@@ -503,8 +504,10 @@ function renderEnrichForm() {
   const grid = document.createElement('div');
   grid.className = 'field-grid';
   const inputs = {};
+  const wraps = {};
   for (const [key, label, type, extra] of ENRICH_FORM) {
     const wrap = document.createElement('label');
+    wraps[key] = wrap;
     wrap.textContent = label;
     let el;
     if (type === 'select') {
@@ -537,19 +540,44 @@ function renderEnrichForm() {
   }
   form.appendChild(grid);
 
-  // org autofill: picking a known company fills size + industry
-  inputs.company_name.addEventListener('change', () => {
-    const org = enrichMeta?.orgs.find((o) => o.company_name === inputs.company_name.value.trim());
-    if (!org) return;
+  // org autofill: as soon as the typed name matches a known company
+  // (case-insensitive), fill size + industry and say so
+  const orgHint = document.createElement('div');
+  orgHint.className = 'org-hint';
+  wraps.company_name.appendChild(orgHint);
+
+  const findOrg = (name) => enrichMeta?.orgs.find(
+    (o) => o.company_name.toLowerCase() === name.trim().toLowerCase());
+
+  const applyOrgAutofill = (normalizeSpelling) => {
+    const typed = inputs.company_name.value.trim();
+    const org = findOrg(typed);
+    if (!org) {
+      orgHint.textContent = typed && typed !== (c.company_name || '')
+        ? 'new company — fill size & industry once and it autofills next time'
+        : '';
+      return;
+    }
+    // snap to the DB's canonical spelling so the org groups as one entity
+    if (normalizeSpelling && inputs.company_name.value !== org.company_name) {
+      inputs.company_name.value = org.company_name;
+    }
+    const filled = [];
     if (org.company_size != null) {
       inputs.company_size.value = org.company_size;
       inputs.company_size.classList.add('autofilled');
+      filled.push('size');
     }
     if (org.company_industry) {
       inputs.company_industry.value = org.company_industry;
       inputs.company_industry.classList.add('autofilled');
+      filled.push('industry');
     }
-  });
+    orgHint.textContent = `known org · ${org.n} contact${org.n > 1 ? 's' : ''}`
+      + (filled.length ? ` — autofilled ${filled.join(' & ')}` : ' — no size/industry on file yet');
+  };
+  inputs.company_name.addEventListener('input', () => applyOrgAutofill(false));
+  inputs.company_name.addEventListener('change', () => applyOrgAutofill(true));
 
   const actions = document.createElement('div');
   actions.className = 'enrich-actions';
