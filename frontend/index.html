@@ -13,6 +13,7 @@
   <nav id="tabs">
     <button data-tab="overview" class="active">Overview</button>
     <button data-tab="breakdowns">Breakdowns</button>
+    <button data-tab="icp">ICP finder</button>
     <button data-tab="contacts">Contacts</button>
   </nav>
   <div class="spacer"></div>
@@ -61,6 +62,24 @@
         <span class="key"><span class="swatch" style="background:var(--series-2)"></span>Click rate</span>
       </div>
       <div id="breakdown-table"><div class="loading">Loading…</div></div>
+    </div>
+  </section>
+
+  <section id="tab-icp" hidden>
+    <div class="card">
+      <h2>ICP finder</h2>
+      <div class="sub">Pick the dimensions that define a profile; every combination in your data is ranked by click rate. Groups below the sample-size threshold are excluded entirely.</div>
+      <div class="icp-controls">
+        <div class="dim-checks" id="icp-dims"></div>
+        <div class="icp-row">
+          <label class="minn">Min sample size <input type="number" id="icp-min-n" value="8" min="1" max="10000"></label>
+          <div class="seg" id="icp-metric">
+            <button data-m="click" class="active">Click rate</button>
+            <button data-m="response">Response rate</button>
+          </div>
+        </div>
+      </div>
+      <div id="icp-table"></div>
     </div>
   </section>
 

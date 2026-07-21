@@ -97,6 +97,29 @@ def timeseries(granularity: str):
     )
 
 
+def icp(dims: list, min_n: int, metric: str):
+    """Group by a combination of whitelisted dimensions, drop groups under
+    min_n, rank by click or response rate. dims/metric validated by caller."""
+    exprs = [DIMENSIONS[d] for d in dims]
+    select_cols = ", ".join(f"{e} AS {d}" for d, e in zip(dims, exprs))
+    group_nums = ", ".join(str(i + 1) for i in range(len(dims)))
+    rate = {
+        "click": "count(*) FILTER (WHERE v.visit_count > 0)::float / count(*)",
+        "response": "count(*) FILTER (WHERE c.responded IS TRUE)::float / count(*)",
+    }[metric]
+    return db.query_all(
+        f"""
+        SELECT {select_cols}, {_COUNTS}
+        FROM contacts c {_VISITS_JOIN}
+        GROUP BY {group_nums}
+        HAVING count(*) >= %s
+        ORDER BY {rate} DESC, count(*) DESC
+        LIMIT 50
+        """,
+        (min_n,),
+    )
+
+
 def list_contacts():
     return db.query_all(
         f"""

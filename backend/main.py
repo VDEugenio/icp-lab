@@ -115,6 +115,24 @@ def timeseries(granularity: str = "week"):
     }
 
 
+@app.get("/api/icp", dependencies=protected)
+def icp(dims: str, min_n: int = 8, metric: str = "click"):
+    dim_list = list(dict.fromkeys(d for d in dims.split(",") if d))  # dedupe, keep order
+    bad = [d for d in dim_list if d not in queries.DIMENSIONS]
+    if not dim_list or bad:
+        raise HTTPException(400, f"dims must be a comma list from: {sorted(queries.DIMENSIONS)}")
+    if metric not in ("click", "response"):
+        raise HTTPException(400, "metric must be 'click' or 'response'")
+    min_n = max(1, min(min_n, 10000))
+    rows = queries.icp(dim_list, min_n, metric)
+    return {
+        "dims": dim_list,
+        "min_n": min_n,
+        "metric": metric,
+        "groups": [_with_rates(r) for r in rows],
+    }
+
+
 @app.get("/api/contacts", dependencies=protected)
 def contacts():
     return {"contacts": queries.list_contacts()}

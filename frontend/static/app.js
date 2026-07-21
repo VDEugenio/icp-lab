@@ -310,6 +310,79 @@ function renderBreakdown(host, groups) {
     }).join('') + '</tbody></table>';
 }
 
+// ---------- ICP finder ----------
+
+const DIM_LABEL = Object.fromEntries(DIMS);
+let icpMetric = 'click';
+
+const icpDims = document.getElementById('icp-dims');
+icpDims.innerHTML = DIMS.map(([k, label]) => {
+  const on = k === 'seniority' || k === 'company_size'; // sensible starting combo
+  return `<label><input type="checkbox" value="${k}"${on ? ' checked' : ''}>${label}</label>`;
+}).join('');
+icpDims.addEventListener('change', loadIcp);
+
+document.getElementById('icp-min-n').addEventListener('change', loadIcp);
+
+document.getElementById('icp-metric').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-m]');
+  if (!btn || btn.dataset.m === icpMetric) return;
+  icpMetric = btn.dataset.m;
+  document.querySelectorAll('#icp-metric button').forEach((b) => b.classList.toggle('active', b === btn));
+  loadIcp();
+});
+
+function icpSelectedDims() {
+  return [...icpDims.querySelectorAll('input:checked')].map((i) => i.value);
+}
+
+async function loadIcp() {
+  const host = document.getElementById('icp-table');
+  const dims = icpSelectedDims();
+  if (!dims.length) {
+    host.innerHTML = '<div class="loading">Select at least one dimension.</div>';
+    return;
+  }
+  const minN = Math.max(1, parseInt(document.getElementById('icp-min-n').value, 10) || 8);
+  host.innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    const data = await api(`/api/icp?dims=${dims.join(',')}&min_n=${minN}&metric=${icpMetric}`);
+    renderIcp(host, data);
+  } catch (err) {
+    host.innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
+  }
+}
+
+function renderIcp(host, data) {
+  const { dims, groups, min_n } = data;
+  if (!groups.length) {
+    host.innerHTML = `<div class="loading">No combination of these dimensions reaches n ≥ ${min_n}. Lower the threshold or pick fewer dimensions.</div>`;
+    return;
+  }
+  const scale = Math.max(0.05, ...groups.flatMap((g) => [g.click_rate || 0, g.response_rate || 0]));
+  const bar = (rate, cls) => `<div class="rate-bar">
+      <div class="track"><div class="fill ${cls}" style="width:${((rate || 0) / scale * 100).toFixed(1)}%"></div></div>
+      <span class="pct">${pct(rate)}</span>
+    </div>`;
+  host.innerHTML = `<table><thead><tr>
+      <th class="num">#</th>
+      ${dims.map((d) => `<th>${esc(DIM_LABEL[d] || d)}</th>`).join('')}
+      <th class="num">n</th>
+      <th class="bar-cell">Click rate</th><th class="bar-cell">Response rate</th>
+      <th class="num">Clicked</th><th class="num">Responded</th>
+    </tr></thead><tbody>` +
+    groups.map((g, i) => `<tr>
+      <td class="num rank">${i + 1}</td>
+      ${dims.map((d) => `<td>${esc(g[d])}</td>`).join('')}
+      <td class="num">${num(g.contacted)}</td>
+      <td class="bar-cell">${bar(g.click_rate, 'click')}</td>
+      <td class="bar-cell">${bar(g.response_rate, 'resp')}</td>
+      <td class="num">${num(g.clicked)}</td>
+      <td class="num">${num(g.responded)}</td>
+    </tr>`).join('') + '</tbody></table>' +
+    (groups.length === 50 ? '<div class="sub" style="margin-top:10px">Showing top 50 combinations.</div>' : '');
+}
+
 // ---------- contacts ----------
 
 const OUTCOMES = ['call', 'referral', 'ghost', 'rejected', 'other'];
@@ -436,4 +509,5 @@ async function saveContact(tr, c, patch) {
 loadStats();
 loadTimeseries();
 loadBreakdown();
+loadIcp();
 loadContacts();
