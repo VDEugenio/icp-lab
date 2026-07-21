@@ -230,6 +230,7 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); 
 }
 .field-grid .autofilled { border-color: var(--accent); }
 .org-hint { font-size: 11px; color: var(--accent); margin-top: 3px; min-height: 14px; }
+.field-grid label select + input { margin-top: 4px; }
 .enrich-actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
 .enrich-actions .save {
   background: var(--accent); color: #fff; border: 0; border-radius: 7px;

@@ -390,7 +390,7 @@ const ENRICH_FORM = [
   ['first_name', 'First name', 'text'],
   ['last_name', 'Last name', 'text'],
   ['title', 'Title', 'text'],
-  ['seniority', 'Seniority', 'text', 'dl-seniorities'],
+  ['seniority', 'Seniority', 'combo', 'seniorities'],
   ['company_name', 'Company', 'text', 'dl-orgs'],
   ['company_size', 'Company size', 'number'],
   ['company_industry', 'Industry', 'text', 'dl-industries'],
@@ -519,6 +519,35 @@ function renderEnrichForm() {
         el.appendChild(o);
       }
       el.value = c[key] || '';
+    } else if (type === 'combo') {
+      // dropdown of known values + a Custom… option that reveals free text;
+      // the text input always holds the real value the save logic reads
+      el = document.createElement('input');
+      el.type = 'text';
+      el.placeholder = 'custom value';
+      const CUSTOM = '__custom__';
+      const known = enrichMeta?.[extra] || [];
+      const sel = document.createElement('select');
+      for (const [v, t] of [['', '—'], ...known.map((k) => [k, k]), [CUSTOM, 'Custom…']]) {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = t;
+        sel.appendChild(o);
+      }
+      const cur = (c[key] ?? '').trim();
+      sel.value = cur === '' ? '' : (known.includes(cur) ? cur : CUSTOM);
+      el.value = cur;
+      el.hidden = sel.value !== CUSTOM;
+      sel.addEventListener('change', () => {
+        if (sel.value === CUSTOM) {
+          el.hidden = false;
+          el.value = '';
+          el.focus();
+        } else {
+          el.hidden = true;
+          el.value = sel.value;
+        }
+      });
+      wrap.appendChild(sel);
     } else if (type === 'bool') {
       el = document.createElement('select');
       for (const [v, t] of [['', '—'], ['true', 'yes'], ['false', 'no']]) {
