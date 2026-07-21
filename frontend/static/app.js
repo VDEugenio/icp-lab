@@ -383,6 +383,241 @@ function renderIcp(host, data) {
     (groups.length === 50 ? '<div class="sub" style="margin-top:10px">Showing top 50 combinations.</div>' : '');
 }
 
+// ---------- enrichment ----------
+
+const ENRICH_KEY_FIELDS = ['title', 'seniority', 'company_name', 'company_size', 'company_industry', 'country'];
+const ENRICH_FORM = [
+  ['first_name', 'First name', 'text'],
+  ['last_name', 'Last name', 'text'],
+  ['title', 'Title', 'text'],
+  ['seniority', 'Seniority', 'text', 'dl-seniorities'],
+  ['company_name', 'Company', 'text', 'dl-orgs'],
+  ['company_size', 'Company size', 'number'],
+  ['company_industry', 'Industry', 'text', 'dl-industries'],
+  ['city', 'City', 'text'],
+  ['state', 'State', 'text'],
+  ['country', 'Country', 'text', 'dl-countries'],
+  ['years_at_company', 'Years at company', 'number'],
+  ['connection_degree', 'Connection', 'select', ['', '1st', '2nd', '3rd']],
+  ['premium', 'Premium', 'bool'],
+  ['follower_count', 'Followers', 'number'],
+  ['departments', 'Departments (comma-sep)', 'text'],
+  ['target_role', 'Target role', 'text'],
+  ['target_company', 'Target company', 'text'],
+  ['channel', 'Channel', 'select', ['', 'copy', 'email']],
+  ['contacted_at', 'Contacted date', 'date'],
+];
+
+let enrichMeta = null;
+let enrichSelectedUid = null;
+let enrichFilterMode = 'missing';
+
+const missingCount = (c) => ENRICH_KEY_FIELDS.filter((f) => c[f] == null || c[f] === '').length;
+
+async function loadEnrichMeta() {
+  try {
+    enrichMeta = await api('/api/enrich-meta');
+    const fill = (id, values) => {
+      document.getElementById(id).innerHTML =
+        values.map((v) => `<option value="${esc(v)}"></option>`).join('');
+    };
+    fill('dl-seniorities', enrichMeta.seniorities);
+    fill('dl-industries', enrichMeta.industries);
+    fill('dl-countries', enrichMeta.countries);
+    document.getElementById('dl-orgs').innerHTML = enrichMeta.orgs.map((o) =>
+      `<option value="${esc(o.company_name)}" label="${esc(`${o.n} contact${o.n > 1 ? 's' : ''}${o.company_industry ? ' · ' + o.company_industry : ''}`)}"></option>`
+    ).join('');
+  } catch (err) {
+    document.getElementById('enrich-list').innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
+  }
+}
+
+document.getElementById('enrich-search').addEventListener('input', renderEnrichList);
+document.getElementById('enrich-filter').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-f]');
+  if (!btn || btn.dataset.f === enrichFilterMode) return;
+  enrichFilterMode = btn.dataset.f;
+  document.querySelectorAll('#enrich-filter button').forEach((b) => b.classList.toggle('active', b === btn));
+  renderEnrichList();
+});
+
+function enrichQueue() {
+  const q = document.getElementById('enrich-search').value.trim().toLowerCase();
+  let rows = allContacts.filter((c) => {
+    if (enrichFilterMode === 'missing' && missingCount(c) === 0) return false;
+    if (!q) return true;
+    const hay = [c.first_name, c.last_name, c.company_name].filter(Boolean).join(' ').toLowerCase();
+    return q.split(/\s+/).every((w) => hay.includes(w));
+  });
+  // most incomplete first, then most recently added — a natural work queue
+  return rows.sort((a, b) => missingCount(b) - missingCount(a)
+    || String(b.created_at || '').localeCompare(String(a.created_at || '')));
+}
+
+function renderEnrichList() {
+  const host = document.getElementById('enrich-list');
+  if (!allContacts.length) { host.innerHTML = '<div class="loading">Loading…</div>'; return; }
+  const rows = enrichQueue();
+  document.getElementById('enrich-count').textContent =
+    `${rows.length} contact${rows.length === 1 ? '' : 's'}`;
+  if (!rows.length) { host.innerHTML = '<div class="loading">Nothing to enrich 🎉</div>'; return; }
+  host.replaceChildren(...rows.map((c) => {
+    const div = document.createElement('div');
+    div.className = 'enrich-item' + (c.uid === enrichSelectedUid ? ' active' : '');
+    div.dataset.uid = c.uid;
+    const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.uid;
+    const miss = missingCount(c);
+    div.innerHTML = `${miss ? `<span class="missing-chip">${miss} missing</span>` : ''}
+      <div class="who">${esc(name)}</div>
+      <div class="org">${esc(c.company_name || c.title || '—')}</div>`;
+    div.addEventListener('click', () => selectEnrich(c.uid));
+    return div;
+  }));
+}
+
+function selectEnrich(uid) {
+  enrichSelectedUid = uid;
+  renderEnrichList();
+  const item = document.querySelector(`.enrich-item[data-uid="${CSS.escape(uid)}"]`);
+  if (item) item.scrollIntoView({ block: 'nearest' });
+  renderEnrichForm();
+}
+
+function renderEnrichForm() {
+  const host = document.getElementById('enrich-form-wrap');
+  const c = allContacts.find((x) => x.uid === enrichSelectedUid);
+  if (!c) { host.innerHTML = '<div class="loading">Select a contact to enrich.</div>'; return; }
+  const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.uid;
+
+  const form = document.createElement('form');
+  const head = document.createElement('div');
+  head.className = 'form-head';
+  head.innerHTML = `<h3>${esc(name)}</h3>
+    ${c.linkedin_url
+      ? `<a class="linkedin-btn" href="${esc(c.linkedin_url)}" target="_blank" rel="noopener noreferrer">Open LinkedIn ↗</a>`
+      : '<span class="no-linkedin">no LinkedIn URL on record</span>'}
+    <span class="chip">${esc(c.uid)}</span>
+    <span class="chip">${num(c.visit_count)} visit${c.visit_count === 1 ? '' : 's'}</span>`;
+  form.appendChild(head);
+
+  const grid = document.createElement('div');
+  grid.className = 'field-grid';
+  const inputs = {};
+  for (const [key, label, type, extra] of ENRICH_FORM) {
+    const wrap = document.createElement('label');
+    wrap.textContent = label;
+    let el;
+    if (type === 'select') {
+      el = document.createElement('select');
+      for (const v of extra) {
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = v === '' ? '—' : (v === 'copy' ? 'LinkedIn DM' : v === 'email' ? 'Email' : v);
+        el.appendChild(o);
+      }
+      el.value = c[key] || '';
+    } else if (type === 'bool') {
+      el = document.createElement('select');
+      for (const [v, t] of [['', '—'], ['true', 'yes'], ['false', 'no']]) {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = t;
+        el.appendChild(o);
+      }
+      el.value = c[key] == null ? '' : String(c[key]);
+    } else {
+      el = document.createElement('input');
+      el.type = type;
+      if (type === 'number') el.step = 'any';
+      if (extra) el.setAttribute('list', extra);
+      el.value = c[key] == null ? '' : (type === 'date' ? String(c[key]).slice(0, 10) : c[key]);
+    }
+    inputs[key] = el;
+    wrap.appendChild(el);
+    grid.appendChild(wrap);
+  }
+  form.appendChild(grid);
+
+  // org autofill: picking a known company fills size + industry
+  inputs.company_name.addEventListener('change', () => {
+    const org = enrichMeta?.orgs.find((o) => o.company_name === inputs.company_name.value.trim());
+    if (!org) return;
+    if (org.company_size != null) {
+      inputs.company_size.value = org.company_size;
+      inputs.company_size.classList.add('autofilled');
+    }
+    if (org.company_industry) {
+      inputs.company_industry.value = org.company_industry;
+      inputs.company_industry.classList.add('autofilled');
+    }
+  });
+
+  const actions = document.createElement('div');
+  actions.className = 'enrich-actions';
+  const save = document.createElement('button');
+  save.type = 'submit'; save.className = 'save'; save.textContent = 'Save';
+  const prev = document.createElement('button');
+  prev.type = 'button'; prev.className = 'nav-btn'; prev.textContent = '↑ Prev';
+  const next = document.createElement('button');
+  next.type = 'button'; next.className = 'nav-btn'; next.textContent = '↓ Next';
+  const hint = document.createElement('span');
+  hint.className = 'hint'; hint.textContent = 'Only changed fields are saved.';
+  actions.append(save, prev, next, hint);
+  form.appendChild(actions);
+
+  const step = (dir) => {
+    const queue = enrichQueue();
+    const i = queue.findIndex((x) => x.uid === enrichSelectedUid);
+    const target = queue[i + dir];
+    if (target) selectEnrich(target.uid);
+  };
+  prev.addEventListener('click', () => step(-1));
+  next.addEventListener('click', () => step(1));
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const patch = {};
+    for (const [key, , type] of ENRICH_FORM) {
+      const raw = inputs[key].value.trim();
+      let val;
+      if (raw === '') val = null;
+      else if (type === 'number') val = Number(raw);
+      else if (type === 'bool') val = raw === 'true';
+      else val = raw;
+      const orig = type === 'date' ? (c[key] ? String(c[key]).slice(0, 10) : null) : (c[key] ?? null);
+      const normOrig = type === 'number' && orig != null ? Number(orig) : orig;
+      if (val !== normOrig) patch[key] = val;
+    }
+    if (!Object.keys(patch).length) { toast('No changes'); return; }
+    save.disabled = true;
+    try {
+      const data = await api(`/api/contacts/${encodeURIComponent(c.uid)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      });
+      Object.assign(c, data.contact);
+      toast('Saved');
+      renderEnrichList();
+      renderContacts();
+      refreshAnalytics();
+      renderEnrichForm(); // re-render so diffing baseline is the saved state
+    } catch (err) {
+      toast(`Save failed: ${err.message}`, true);
+    } finally {
+      save.disabled = false;
+    }
+  });
+
+  host.replaceChildren(form);
+}
+
+// analytics views cache their data at load; refresh quietly after any edit
+function refreshAnalytics() {
+  loadStats();
+  loadTimeseries();
+  loadBreakdown();
+  loadIcp();
+}
+
 // ---------- contacts ----------
 
 const OUTCOMES = ['call', 'referral', 'ghost', 'rejected', 'other'];
@@ -396,6 +631,7 @@ async function loadContacts() {
     const data = await api('/api/contacts');
     allContacts = data.contacts;
     renderContacts();
+    renderEnrichList();
   } catch (err) {
     host.innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
   }
@@ -496,6 +732,7 @@ async function saveContact(tr, c, patch) {
     Object.assign(c, data.contact); // server truth: responded, responded_at, outcome
     tr.replaceWith(contactRow(c));
     toast('Saved');
+    refreshAnalytics();
   } catch (err) {
     tr.replaceWith(contactRow(c)); // revert to last known state
     toast(`Save failed: ${err.message}`, true);
@@ -510,4 +747,5 @@ loadStats();
 loadTimeseries();
 loadBreakdown();
 loadIcp();
+loadEnrichMeta();
 loadContacts();

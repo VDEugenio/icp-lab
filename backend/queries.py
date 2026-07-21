@@ -54,6 +54,24 @@ DIMENSIONS = {
 
 OUTCOMES = {"call", "referral", "ghost", "rejected", "other"}
 
+# Columns the icp_lab DB role may UPDATE for manual enrichment (matches the
+# column-level grants; uid/created_at/apollo_raw/linkedin_url are excluded
+# both here and at the DB level).
+ENRICH_COLUMNS = {
+    "first_name", "last_name", "title", "seniority", "departments",
+    "company_name", "company_size", "company_industry",
+    "city", "state", "country", "years_at_company", "email_status",
+    "premium", "follower_count", "connection_degree",
+    "target_role", "target_company", "channel", "contacted_at",
+}
+
+_RETURN_COLS = (
+    "uid, responded, responded_at, outcome, first_name, last_name, title, "
+    "seniority, departments, company_name, company_size, company_industry, "
+    "city, state, country, years_at_company, premium, follower_count, "
+    "connection_degree, target_role, target_company, channel, contacted_at"
+)
+
 _COUNTS = """
     count(*) AS contacted,
     count(*) FILTER (WHERE v.visit_count > 0) AS clicked,
@@ -124,8 +142,9 @@ def list_contacts():
     return db.query_all(
         f"""
         SELECT c.uid, c.first_name, c.last_name, c.linkedin_url, c.title,
-               c.seniority, c.company_name, c.company_size, c.company_industry,
-               c.connection_degree, c.city, c.state, c.country, c.target_role,
+               c.seniority, c.departments, c.company_name, c.company_size,
+               c.company_industry, c.connection_degree, c.city, c.state,
+               c.country, c.years_at_company, c.target_role,
                c.target_company, c.channel, c.premium, c.follower_count,
                c.created_at, c.contacted_at, c.responded, c.responded_at,
                c.outcome,
@@ -137,20 +156,16 @@ def list_contacts():
 
 
 def update_contact(uid: str, fields: dict) -> dict | None:
-    """fields may contain: responded (bool|None), outcome (str|None),
-    responded_at (datetime|None). Already validated by the API layer.
-    Returns the updated row, or None if uid doesn't exist."""
-    allowed = {"responded", "outcome", "responded_at"}
+    """fields: outcome-recording columns and/or ENRICH_COLUMNS, already
+    validated by the API layer. Returns the updated row, or None if uid
+    doesn't exist."""
+    allowed = {"responded", "outcome", "responded_at"} | ENRICH_COLUMNS
     assert set(fields) <= allowed, f"unexpected fields: {set(fields) - allowed}"
     if not fields:
-        return db.query_one(
-            "SELECT uid, responded, responded_at, outcome FROM contacts c WHERE uid = %s",
-            (uid,),
-        )
+        return get_contact(uid)
     sets = ", ".join(f"{col} = %s" for col in fields)
     row = db.query_one(
-        f"UPDATE contacts c SET {sets} WHERE uid = %s"
-        " RETURNING uid, responded, responded_at, outcome",
+        f"UPDATE contacts c SET {sets} WHERE uid = %s RETURNING {_RETURN_COLS}",
         (*fields.values(), uid),
     )
     return row
@@ -158,6 +173,39 @@ def update_contact(uid: str, fields: dict) -> dict | None:
 
 def get_contact(uid: str) -> dict | None:
     return db.query_one(
-        "SELECT uid, responded, responded_at, outcome FROM contacts WHERE uid = %s",
+        f"SELECT {_RETURN_COLS} FROM contacts WHERE uid = %s",
         (uid,),
     )
+
+
+def enrich_meta():
+    """Suggestion data for the enrichment form: known orgs (with their most
+    common size/industry for autofill) and distinct values for datalists."""
+    orgs = db.query_all(
+        """
+        SELECT company_name,
+               mode() WITHIN GROUP (ORDER BY company_size) AS company_size,
+               mode() WITHIN GROUP (ORDER BY company_industry) AS company_industry,
+               count(*) AS n
+        FROM contacts
+        WHERE nullif(trim(company_name), '') IS NOT NULL
+        GROUP BY company_name
+        ORDER BY count(*) DESC, company_name
+        """
+    )
+
+    def distinct(col):  # col is code-controlled, never user input
+        return [
+            r["v"]
+            for r in db.query_all(
+                f"SELECT DISTINCT nullif(trim({col}), '') AS v FROM contacts"
+                f" WHERE nullif(trim({col}), '') IS NOT NULL ORDER BY 1"
+            )
+        ]
+
+    return {
+        "orgs": orgs,
+        "seniorities": distinct("seniority"),
+        "industries": distinct("company_industry"),
+        "countries": distinct("country"),
+    }

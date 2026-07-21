@@ -196,6 +196,50 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); 
 }
 .rank { color: var(--muted); font-variant-numeric: tabular-nums; }
 
+/* ---------- enrichment ---------- */
+.enrich-layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; }
+@media (max-width: 900px) { .enrich-layout { grid-template-columns: 1fr; } }
+.enrich-list { max-height: 70vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+.enrich-item {
+  padding: 9px 12px; cursor: pointer; border-bottom: 1px solid var(--grid);
+}
+.enrich-item:last-child { border-bottom: 0; }
+.enrich-item:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.enrich-item.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.enrich-item .who { font-weight: 600; font-size: 13px; }
+.enrich-item .org { color: var(--ink-2); font-size: 12px; }
+.missing-chip {
+  float: right; font-size: 10.5px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 0 7px;
+}
+.enrich-form-wrap .form-head {
+  display: flex; align-items: center; gap: 14px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.enrich-form-wrap .form-head h3 { margin: 0; font-size: 16px; }
+.linkedin-btn {
+  display: inline-block; background: var(--accent); color: #fff !important;
+  padding: 6px 14px; border-radius: 7px; font-size: 13px; font-weight: 600;
+  text-decoration: none !important;
+}
+.no-linkedin { color: var(--muted); font-size: 13px; }
+.field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 14px; }
+.field-grid label { display: block; font-size: 11.5px; color: var(--muted); }
+.field-grid input, .field-grid select {
+  width: 100%; margin-top: 3px; font: inherit; font-size: 13px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+}
+.field-grid .autofilled { border-color: var(--accent); }
+.enrich-actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+.enrich-actions .save {
+  background: var(--accent); color: #fff; border: 0; border-radius: 7px;
+  padding: 8px 20px; font: inherit; font-weight: 600; cursor: pointer;
+}
+.enrich-actions .nav-btn {
+  border: 1px solid var(--border); background: none; color: var(--ink-2);
+  border-radius: 7px; padding: 7px 14px; font: inherit; cursor: pointer;
+}
+.enrich-actions .hint { color: var(--muted); font-size: 12px; }
+
 /* ---------- contacts ---------- */
 .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 .toolbar input[type="search"] {

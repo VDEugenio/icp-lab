@@ -14,6 +14,7 @@
     <button data-tab="overview" class="active">Overview</button>
     <button data-tab="breakdowns">Breakdowns</button>
     <button data-tab="icp">ICP finder</button>
+    <button data-tab="enrich">Enrich</button>
     <button data-tab="contacts">Contacts</button>
   </nav>
   <div class="spacer"></div>
@@ -81,6 +82,29 @@
       </div>
       <div id="icp-table"></div>
     </div>
+  </section>
+
+  <section id="tab-enrich" hidden>
+    <div class="card">
+      <div class="toolbar">
+        <input type="search" id="enrich-search" placeholder="Filter by name or company…">
+        <div class="seg" id="enrich-filter">
+          <button data-f="missing" class="active">Needs enrichment</button>
+          <button data-f="all">All</button>
+        </div>
+        <span class="count" id="enrich-count"></span>
+      </div>
+      <div class="enrich-layout">
+        <div class="enrich-list" id="enrich-list"><div class="loading">Loading…</div></div>
+        <div class="enrich-form-wrap" id="enrich-form-wrap">
+          <div class="loading">Select a contact to enrich.</div>
+        </div>
+      </div>
+    </div>
+    <datalist id="dl-orgs"></datalist>
+    <datalist id="dl-seniorities"></datalist>
+    <datalist id="dl-industries"></datalist>
+    <datalist id="dl-countries"></datalist>
   </section>
 
   <section id="tab-contacts" hidden>

@@ -138,12 +138,44 @@ def contacts():
     return {"contacts": queries.list_contacts()}
 
 
+@app.get("/api/enrich-meta", dependencies=protected)
+def enrich_meta():
+    return queries.enrich_meta()
+
+
 # ---------- the only write path ----------
 
 class ContactUpdate(BaseModel):
     responded: bool | None = None
     outcome: str | None = None
     responded_at: datetime | None = None
+    # manual enrichment fields (must stay within queries.ENRICH_COLUMNS)
+    first_name: str | None = None
+    last_name: str | None = None
+    title: str | None = None
+    seniority: str | None = None
+    departments: str | None = None
+    company_name: str | None = None
+    company_size: int | None = None
+    company_industry: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+    years_at_company: float | None = None
+    email_status: str | None = None
+    premium: bool | None = None
+    follower_count: int | None = None
+    connection_degree: str | None = None
+    target_role: str | None = None
+    target_company: str | None = None
+    channel: str | None = None
+    contacted_at: datetime | None = None
+
+
+ENRICH_ENUMS = {
+    "connection_degree": {"1st", "2nd", "3rd"},
+    "channel": {"copy", "email"},
+}
 
 
 @app.patch("/api/contacts/{uid}", dependencies=protected)
@@ -159,6 +191,16 @@ def update_contact(uid: str, body: ContactUpdate):
         if body.outcome is not None and body.outcome not in queries.OUTCOMES:
             raise HTTPException(400, f"outcome must be one of {sorted(queries.OUTCOMES)} or null")
         fields["outcome"] = body.outcome
+
+    for name in sorted(provided & queries.ENRICH_COLUMNS - {"contacted_at"}):
+        val = getattr(body, name)
+        if isinstance(val, str):
+            val = val.strip() or None
+        if val is not None and name in ENRICH_ENUMS and val not in ENRICH_ENUMS[name]:
+            raise HTTPException(400, f"{name} must be one of {sorted(ENRICH_ENUMS[name])} or null")
+        fields[name] = val
+    if "contacted_at" in provided:
+        fields["contacted_at"] = body.contacted_at
 
     if "responded" in provided:
         fields["responded"] = body.responded
