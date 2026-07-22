@@ -675,6 +675,56 @@ function renderEnrichForm() {
   host.replaceChildren(form);
 }
 
+async function copyMessageAndOpen(p, cardDiv, btn) {
+  const role = currentRole();
+  const company = jdCompany;
+  const first = (p.name || '').split(' ')[0];
+  const rest = (p.name || '').split(' ').slice(1).join(' ').replace(/\.$/, '');
+
+  // warn (don't silently proceed) if the message would ship with a gap
+  if (!role || !company) {
+    if (!confirm(`${!role ? 'Role' : 'Company'} is empty — the message would have a hole in it. Copy anyway?`)) return;
+  }
+
+  btn.textContent = 'Working…';
+  try {
+    // create (or dedupe by linkedin_url) the contact via outreach-backend —
+    // that's where uids and tracking links are minted
+    if (!p.outreach) {
+      p.outreach = await api('/api/outreach-contact', {
+        method: 'POST',
+        body: JSON.stringify({
+          first_name: first,
+          last_name: rest || null,
+          linkedin_url: p.linkedin_url,
+          target_role: role || null,
+          target_company: company || null,
+        }),
+      });
+    }
+    const msg = buildMessage(first, role, company, p.outreach.tracking_url);
+    if (msg.length > MESSAGE_LIMIT) {
+      if (!confirm(`Message is ${msg.length} chars (limit ${MESSAGE_LIMIT}). LinkedIn may truncate it. Copy anyway? (Tip: shorten the Role field.)`)) {
+        btn.textContent = 'Copy msg + LinkedIn ↗';
+        return;
+      }
+    }
+    await navigator.clipboard.writeText(msg);
+    window.open(p.linkedin_url, '_blank', 'noopener,noreferrer,width=1250,height=950');
+    cardDiv.classList.add('visited');
+    btn.textContent = 'Copy msg + LinkedIn ↗';
+    toast(`Message copied (${msg.length} chars) · contact ${p.outreach.uid}`);
+    // stamp contacted (channel=copy, sets contacted_at) — fire and forget
+    api('/api/outreach-contacted', {
+      method: 'POST',
+      body: JSON.stringify({ uid: p.outreach.uid }),
+    }).then(() => { loadContacts(); refreshAnalytics(); }).catch(() => toast('Contacted-stamp failed', true));
+  } catch (err) {
+    btn.textContent = 'Copy msg + LinkedIn ↗';
+    toast(`Failed: ${err.message}`, true);
+  }
+}
+
 // analytics views cache their data at load; refresh quietly after any edit
 function refreshAnalytics() {
   loadStats();
@@ -720,10 +770,35 @@ function scoreTooltip(score, name) {
   ]);
 }
 
+// current search context: company from the parse, role editable by the user
+// (abbreviate it to keep the outreach message under 300 chars)
+let jdCompany = '';
+
+const MESSAGE_LIMIT = 300;
+
+function buildMessage(first, role, company, link) {
+  return `Hi ${first}!\n\nI'm very interested in the ${role} opening at ${company} and wanted to reach out. I'd love to hear about your experience with the company and get any insight you're willing to share.\n\nWould you be open to a quick chat?\n\nTalk soon,\nVaughn\n${link}`;
+}
+
+function currentRole() {
+  const el = document.getElementById('jd-role');
+  return el ? el.value.trim() : '';
+}
+
+function updateRoleCounter() {
+  const counter = document.getElementById('jd-msg-len');
+  if (!counter) return;
+  // estimate with a typical first name and tracking link; exact check happens on copy
+  const len = buildMessage('Firstname', currentRole(), jdCompany, 'x'.repeat(40)).length;
+  counter.textContent = `message ≈ ${len} chars${len > MESSAGE_LIMIT ? ' — over 300, shorten the role!' : ''}`;
+  counter.style.color = len > MESSAGE_LIMIT ? 'var(--danger)' : 'var(--muted)';
+}
+
 function renderProspects(data) {
   const host = document.getElementById('jd-results');
   const { parsed, company_profile: cp, categories } = data;
   const total = categories.reduce((s, c) => s + c.people.length, 0);
+  jdCompany = parsed.company_name || '';
 
   const card = document.createElement('div');
   card.className = 'card';
@@ -732,10 +807,11 @@ function renderProspects(data) {
   card.innerHTML = `
     <div class="parsed-bar">
       <span class="pill">Company: <b>${esc(parsed.company_name)}</b></span>
-      <span class="pill">Role: <b>${esc(parsed.role_title)}</b></span>
+      <label class="pill role-pill">Role: <input id="jd-role" value="${esc(parsed.role_title || '')}" title="Editable — this goes into the outreach message. Abbreviate to stay under 300 chars."></label>
       <span class="pill">${esc(parsed.department || '')}</span>
       <span class="pill">${esc(parsed.seniority || '')}</span>
       <span class="pill">${total} people found</span>
+      <span class="hint" id="jd-msg-len"></span>
     </div>
     <div class="company-fit">
       Company fit vs your history: size <b>${esc(cp.size_bucket)}</b>
@@ -743,16 +819,32 @@ function renderProspects(data) {
       industry <b>${esc(cp.industry)}</b> (${(indHist.rate * 100).toFixed(1)}% click, n=${indHist.n})` : ''}
       — your overall click rate is ${(cp.overall_click_rate * 100).toFixed(1)}%.
       Scores below are per-person estimates from seniority + country history; low-n segments are shrunk toward the average.
+      Clicking LinkedIn on a revealed card copies your outreach message (with tracking link) and stamps the contact.
     </div>`;
+
+  card.querySelector('#jd-role').addEventListener('input', updateRoleCounter);
 
   const grid = document.createElement('div');
   grid.className = 'prospect-grid';
   for (const cat of categories) {
     const col = document.createElement('div');
     col.className = 'prospect-col';
+    const head = document.createElement('div');
+    head.className = 'col-head';
     const h = document.createElement('h3');
     h.textContent = `${cat.label} (${cat.people.length})`;
-    col.appendChild(h);
+    head.appendChild(h);
+
+    const unrevealed = cat.people.filter((p) => !p.linkedin_url);
+    if (unrevealed.length) {
+      const btn = document.createElement('button');
+      btn.className = 'reveal-all';
+      btn.textContent = `Reveal all · ${unrevealed.length} cr`;
+      btn.addEventListener('click', () => revealAll(cat, col, btn));
+      head.appendChild(btn);
+    }
+    col.appendChild(head);
+
     for (const p of cat.people) col.appendChild(prospectCard(p));
     if (!cat.people.length) {
       const empty = document.createElement('div');
@@ -764,11 +856,38 @@ function renderProspects(data) {
   }
   card.appendChild(grid);
   host.replaceChildren(card);
+  updateRoleCounter();
+}
+
+async function revealAll(cat, col, btn) {
+  const targets = cat.people.filter((p) => !p.linkedin_url && !p.revealed);
+  if (!targets.length) { btn.remove(); return; }
+  if (!confirm(`Reveal ${targets.length} people in "${cat.label}"? This spends ${targets.length} Apollo credit${targets.length > 1 ? 's' : ''}.`)) return;
+  btn.disabled = true;
+  let done = 0, failed = 0;
+  for (const p of targets) {
+    btn.textContent = `Revealing ${done + failed + 1}/${targets.length}…`;
+    try {
+      const d = await api('/api/prospect-reveal', {
+        method: 'POST',
+        body: JSON.stringify({ id: p.id }),
+      });
+      Object.assign(p, d);
+      const el = col.querySelector(`[data-pid="${CSS.escape(p.id)}"]`);
+      if (el) el.replaceWith(prospectCard(p));
+      done++;
+    } catch {
+      failed++;
+    }
+  }
+  btn.remove();
+  toast(failed ? `Revealed ${done}, ${failed} failed` : `Revealed ${done} people`, failed > 0);
 }
 
 function prospectCard(p) {
   const div = document.createElement('div');
   div.className = 'prospect-card';
+  div.dataset.pid = p.id;
 
   const badge = document.createElement('span');
   badge.className = `score-badge ${p.score.tier}`;
@@ -804,11 +923,10 @@ function prospectCard(p) {
     const btn = document.createElement('a');
     btn.className = 'p-linkedin';
     btn.href = p.linkedin_url;
-    btn.textContent = 'LinkedIn ↗';
+    btn.textContent = 'Copy msg + LinkedIn ↗';
     btn.addEventListener('click', (e) => {
       e.preventDefault();
-      window.open(p.linkedin_url, '_blank', 'noopener,noreferrer,width=1250,height=950');
-      div.classList.add('visited'); // dim so you don't re-visit by accident
+      copyMessageAndOpen(p, div, btn);
     });
     row.appendChild(btn);
   } else {

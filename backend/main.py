@@ -168,6 +168,58 @@ async def prospect_reveal(body: RevealBody):
     return await jd_finder.reveal_person(body.id)
 
 
+# ---------- outreach-backend proxies (contact creation + tracking links) ----------
+# Contact creation always goes through outreach-backend so UID generation
+# stays in one place — icp-lab never inserts contacts itself.
+
+import os as _os
+
+import httpx as _httpx
+
+OUTREACH_BASE = _os.environ.get(
+    "OUTREACH_BACKEND_URL", "https://outreach-backend-production-326e.up.railway.app"
+)
+
+
+class OutreachContactBody(BaseModel):
+    first_name: str
+    last_name: str | None = None
+    linkedin_url: str | None = None
+    target_role: str | None = None
+    target_company: str | None = None
+
+
+@app.post("/api/outreach-contact", dependencies=protected)
+async def outreach_contact(body: OutreachContactBody):
+    async with _httpx.AsyncClient(timeout=20) as client:
+        try:
+            r = await client.post(f"{OUTREACH_BASE}/contacts", json=body.model_dump())
+        except _httpx.HTTPError as e:
+            raise HTTPException(502, f"outreach-backend unreachable: {type(e).__name__}")
+    if r.status_code >= 400:
+        raise HTTPException(502, f"outreach-backend error ({r.status_code}): {r.text[:200]}")
+    data = r.json()
+    return {"uid": data["uid"], "tracking_url": data["tracking_url"]}
+
+
+class OutreachContactedBody(BaseModel):
+    uid: str
+
+
+@app.post("/api/outreach-contacted", dependencies=protected)
+async def outreach_contacted(body: OutreachContactedBody):
+    async with _httpx.AsyncClient(timeout=20) as client:
+        try:
+            r = await client.post(
+                f"{OUTREACH_BASE}/contacts/{body.uid}/contacted", json={"channel": "copy"}
+            )
+        except _httpx.HTTPError as e:
+            raise HTTPException(502, f"outreach-backend unreachable: {type(e).__name__}")
+    if r.status_code >= 400:
+        raise HTTPException(502, f"outreach-backend error ({r.status_code}): {r.text[:200]}")
+    return {"ok": True}
+
+
 # ---------- the only write path ----------
 
 class ContactUpdate(BaseModel):
