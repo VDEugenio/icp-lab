@@ -788,8 +788,9 @@ function currentRole() {
 function updateRoleCounter() {
   const counter = document.getElementById('jd-msg-len');
   if (!counter) return;
-  // estimate with a typical first name and tracking link; exact check happens on copy
-  const len = buildMessage('Firstname', currentRole(), jdCompany, 'x'.repeat(40)).length;
+  // estimate with a typical first name and a vaughneugenio.com/r/xxx-length
+  // tracking link; the exact check happens on copy with the real values
+  const len = buildMessage('Firstname', currentRole(), jdCompany, 'x'.repeat(31)).length;
   counter.textContent = `message ≈ ${len} chars${len > MESSAGE_LIMIT ? ' — over 300, shorten the role!' : ''}`;
   counter.style.color = len > MESSAGE_LIMIT ? 'var(--danger)' : 'var(--muted)';
 }
