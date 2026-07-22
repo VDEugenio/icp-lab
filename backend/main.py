@@ -143,6 +143,19 @@ def enrich_meta():
     return queries.enrich_meta()
 
 
+class JDSearchBody(BaseModel):
+    job_description: str
+
+
+@app.post("/api/jd-search", dependencies=protected)
+async def jd_search(body: JDSearchBody):
+    if not body.job_description.strip():
+        raise HTTPException(400, "job_description is empty")
+    import jd_finder
+
+    return await jd_finder.find_prospects(body.job_description)
+
+
 # ---------- the only write path ----------
 
 class ContactUpdate(BaseModel):

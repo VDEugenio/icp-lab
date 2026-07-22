@@ -242,6 +242,54 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); 
 }
 .enrich-actions .hint { color: var(--muted); font-size: 12px; }
 
+/* ---------- prospect finder ---------- */
+#jd-input {
+  width: 100%; font: inherit; font-size: 13px; color: var(--ink);
+  background: var(--page); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; resize: vertical;
+}
+.parsed-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.parsed-bar .pill {
+  border: 1px solid var(--border); border-radius: 999px; padding: 3px 12px;
+  font-size: 12.5px; color: var(--ink-2);
+}
+.parsed-bar .pill b { color: var(--ink); font-weight: 600; }
+.company-fit { color: var(--ink-2); font-size: 12.5px; margin-bottom: 4px; }
+.prospect-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; align-items: start; }
+.prospect-col h3 {
+  font-size: 12px; font-weight: 650; color: var(--muted); margin: 0 0 8px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.prospect-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 9px;
+  padding: 10px 12px; margin-bottom: 8px;
+}
+.prospect-card.visited { opacity: 0.55; }
+.prospect-card .p-name { font-weight: 600; font-size: 13px; }
+.prospect-card .p-title { color: var(--ink-2); font-size: 12px; margin: 1px 0 6px; }
+.prospect-card .p-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.score-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; border-radius: 999px; padding: 1px 9px;
+  border: 1px solid var(--border); cursor: default;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+}
+.score-badge .dot { width: 8px; height: 8px; border-radius: 50%; }
+.score-badge.strong .dot { background: #0ca30c; }
+.score-badge.average .dot { background: var(--muted); }
+.score-badge.weak .dot { background: #d03b3b; }
+.known-chip {
+  font-size: 11px; border-radius: 999px; padding: 1px 8px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--ink); border: 1px solid var(--accent);
+}
+.p-linkedin {
+  margin-left: auto; font-size: 12px; font-weight: 600;
+  background: var(--accent); color: #fff !important; border-radius: 6px;
+  padding: 3px 10px; text-decoration: none !important; cursor: pointer;
+}
+.p-linkedin.disabled { background: var(--baseline); pointer-events: none; }
+
 /* ---------- contacts ---------- */
 .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 .toolbar input[type="search"] {

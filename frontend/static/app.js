@@ -683,6 +683,138 @@ function refreshAnalytics() {
   loadIcp();
 }
 
+// ---------- prospect finder (JD → scored people) ----------
+
+const jdGo = document.getElementById('jd-go');
+const jdStatus = document.getElementById('jd-status');
+
+jdGo.addEventListener('click', async () => {
+  const jd = document.getElementById('jd-input').value.trim();
+  if (!jd) { toast('Paste a job description first', true); return; }
+  jdGo.disabled = true;
+  jdStatus.textContent = 'Parsing JD with Claude, then searching Apollo… (~15s)';
+  document.getElementById('jd-results').innerHTML = '';
+  try {
+    const data = await api('/api/jd-search', {
+      method: 'POST',
+      body: JSON.stringify({ job_description: jd }),
+    });
+    renderProspects(data);
+    jdStatus.textContent = '';
+  } catch (err) {
+    jdStatus.textContent = '';
+    document.getElementById('jd-results').innerHTML =
+      `<div class="card"><div class="error-box">${esc(err.message)}</div></div>`;
+  } finally {
+    jdGo.disabled = false;
+  }
+});
+
+function scoreTooltip(score, name) {
+  return ttRows(`${name} — est. click rate ${score.pct}%`, [
+    ...score.parts.map((p) => [
+      `${p.dim}: ${p.segment}`,
+      `${(p.rate * 100).toFixed(1)}% (n=${p.n})`,
+    ]),
+    ['Tier', score.tier],
+  ]);
+}
+
+function renderProspects(data) {
+  const host = document.getElementById('jd-results');
+  const { parsed, company_profile: cp, categories } = data;
+  const total = categories.reduce((s, c) => s + c.people.length, 0);
+
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const sizeHist = cp.size_history, indHist = cp.industry_history;
+  card.innerHTML = `
+    <div class="parsed-bar">
+      <span class="pill">Company: <b>${esc(parsed.company_name)}</b></span>
+      <span class="pill">Role: <b>${esc(parsed.role_title)}</b></span>
+      <span class="pill">${esc(parsed.department || '')}</span>
+      <span class="pill">${esc(parsed.seniority || '')}</span>
+      <span class="pill">${total} people found</span>
+    </div>
+    <div class="company-fit">
+      Company fit vs your history: size <b>${esc(cp.size_bucket)}</b>
+      (${(sizeHist.rate * 100).toFixed(1)}% click, n=${sizeHist.n})${cp.industry ? `,
+      industry <b>${esc(cp.industry)}</b> (${(indHist.rate * 100).toFixed(1)}% click, n=${indHist.n})` : ''}
+      — your overall click rate is ${(cp.overall_click_rate * 100).toFixed(1)}%.
+      Scores below are per-person estimates from seniority + country history; low-n segments are shrunk toward the average.
+    </div>`;
+
+  const grid = document.createElement('div');
+  grid.className = 'prospect-grid';
+  for (const cat of categories) {
+    const col = document.createElement('div');
+    col.className = 'prospect-col';
+    const h = document.createElement('h3');
+    h.textContent = `${cat.label} (${cat.people.length})`;
+    col.appendChild(h);
+    for (const p of cat.people) col.appendChild(prospectCard(p));
+    if (!cat.people.length) {
+      const empty = document.createElement('div');
+      empty.className = 'loading';
+      empty.textContent = 'No matches.';
+      col.appendChild(empty);
+    }
+    grid.appendChild(col);
+  }
+  card.appendChild(grid);
+  host.replaceChildren(card);
+}
+
+function prospectCard(p) {
+  const div = document.createElement('div');
+  div.className = 'prospect-card';
+
+  const badge = document.createElement('span');
+  badge.className = `score-badge ${p.score.tier}`;
+  badge.innerHTML = `<span class="dot"></span>${p.score.pct}% · ${p.score.tier === 'strong' ? 'strong fit' : p.score.tier === 'weak' ? 'weak fit' : 'avg fit'}`;
+  badge.addEventListener('mousemove', (e) => showTooltip(scoreTooltip(p.score, p.name), e.clientX, e.clientY));
+  badge.addEventListener('mouseleave', hideTooltip);
+
+  div.innerHTML = `
+    <div class="p-name">${esc(p.name)}</div>
+    <div class="p-title">${esc(p.title || '—')}${p.country ? ` · ${esc(p.country)}` : ''}</div>`;
+
+  const row = document.createElement('div');
+  row.className = 'p-row';
+  row.appendChild(badge);
+
+  if (p.known) {
+    const chip = document.createElement('span');
+    chip.className = 'known-chip';
+    chip.textContent = 'In your DB' + (p.known.responded ? ' · responded' : p.known.clicked ? ' · clicked' : '');
+    chip.addEventListener('mousemove', (e) => showTooltip(ttRows('Already contacted', [
+      ['uid', p.known.uid],
+      ['Clicked', p.known.clicked ? 'yes' : 'no'],
+      ['Responded', p.known.responded ? 'yes' : 'no'],
+      ['Outcome', p.known.outcome || '—'],
+    ]), e.clientX, e.clientY));
+    chip.addEventListener('mouseleave', hideTooltip);
+    row.appendChild(chip);
+  }
+
+  if (p.linkedin_url) {
+    const btn = document.createElement('a');
+    btn.className = 'p-linkedin';
+    btn.href = p.linkedin_url;
+    btn.textContent = 'LinkedIn ↗';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      window.open(p.linkedin_url, '_blank', 'noopener,noreferrer,width=1250,height=950');
+      div.classList.add('visited'); // dim so you don't re-visit by accident
+    });
+    row.appendChild(btn);
+  }
+
+  div.appendChild(row);
+  return div;
+}
+
 // ---------- contacts ----------
 
 const OUTCOMES = ['call', 'referral', 'ghost', 'rejected', 'other'];

@@ -15,6 +15,7 @@
     <button data-tab="breakdowns">Breakdowns</button>
     <button data-tab="icp">ICP finder</button>
     <button data-tab="enrich">Enrich</button>
+    <button data-tab="prospect">Prospect</button>
     <button data-tab="contacts">Contacts</button>
   </nav>
   <div class="spacer"></div>
@@ -104,6 +105,19 @@
     <datalist id="dl-orgs"></datalist>
     <datalist id="dl-industries"></datalist>
     <datalist id="dl-titles"></datalist>
+  </section>
+
+  <section id="tab-prospect" hidden>
+    <div class="card">
+      <h2>Find people from a job description</h2>
+      <div class="sub">Paste a JD. Claude extracts the company and role, Apollo finds people in four categories, and each person is scored against your own click-rate history. People search costs no Apollo credits.</div>
+      <textarea id="jd-input" rows="8" placeholder="Paste the job description here…"></textarea>
+      <div class="enrich-actions" style="margin-top:10px">
+        <button class="save" id="jd-go">Find people</button>
+        <span class="hint" id="jd-status"></span>
+      </div>
+    </div>
+    <div id="jd-results"></div>
   </section>
 
   <section id="tab-contacts" hidden>
