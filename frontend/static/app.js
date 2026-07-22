@@ -787,8 +787,10 @@ function prospectCard(p) {
   if (p.known) {
     const chip = document.createElement('span');
     chip.className = 'known-chip';
-    chip.textContent = 'In your DB' + (p.known.responded ? ' · responded' : p.known.clicked ? ' · clicked' : '');
-    chip.addEventListener('mousemove', (e) => showTooltip(ttRows('Already contacted', [
+    const prefix = p.known.fuzzy ? 'Likely in your DB' : 'In your DB';
+    chip.textContent = prefix + (p.known.responded ? ' · responded' : p.known.clicked ? ' · clicked' : '');
+    chip.addEventListener('mousemove', (e) => showTooltip(ttRows(
+      p.known.fuzzy ? `Probably ${p.known.name} (name-pattern match)` : 'Already contacted', [
       ['uid', p.known.uid],
       ['Clicked', p.known.clicked ? 'yes' : 'no'],
       ['Responded', p.known.responded ? 'yes' : 'no'],
@@ -798,14 +800,17 @@ function prospectCard(p) {
     row.appendChild(chip);
   }
 
-  if (p.linkedin_url) {
+  // Apollo's free search often hides the profile URL — fall back to a
+  // LinkedIn people-search for name + title + company
+  const url = p.linkedin_url || p.linkedin_search_url;
+  if (url) {
     const btn = document.createElement('a');
     btn.className = 'p-linkedin';
-    btn.href = p.linkedin_url;
-    btn.textContent = 'LinkedIn ↗';
+    btn.href = url;
+    btn.textContent = p.linkedin_url ? 'LinkedIn ↗' : 'Find on LinkedIn ↗';
     btn.addEventListener('click', (e) => {
       e.preventDefault();
-      window.open(p.linkedin_url, '_blank', 'noopener,noreferrer,width=1250,height=950');
+      window.open(url, '_blank', 'noopener,noreferrer,width=1250,height=950');
       div.classList.add('visited'); // dim so you don't re-visit by accident
     });
     row.appendChild(btn);

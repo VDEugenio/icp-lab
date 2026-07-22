@@ -7,6 +7,7 @@ People search costs no Apollo credits; nothing here spends credits.
 """
 import asyncio
 import os
+from urllib.parse import quote_plus
 
 import httpx
 from anthropic import AsyncAnthropic, APIError
@@ -239,9 +240,10 @@ def score_person(person: dict, stats: dict) -> dict:
     }
 
 
-def company_profile(people: list, stats: dict) -> dict:
-    """Company-level fit, shown once: derived from the org data Apollo returns
-    on the people at this company, matched against our size/industry history."""
+def company_profile(people: list, stats: dict, company_name: str) -> dict:
+    """Company-level fit, shown once. Apollo's api_search obfuscates org data
+    (has_* flags only), so fall back to what our own DB knows about this
+    company from previously-enriched contacts."""
     sizes = [p.get("organization", {}).get("estimated_num_employees") for p in people]
     sizes = [s for s in sizes if s]
     industries = [
@@ -251,6 +253,16 @@ def company_profile(people: list, stats: dict) -> dict:
     industries = [i for i in industries if i]
     size = max(set(sizes), key=sizes.count) if sizes else None
     industry = max(set(industries), key=industries.count) if industries else None
+
+    if size is None or industry is None:
+        own = db.query_one(
+            """SELECT mode() WITHIN GROUP (ORDER BY company_size) AS size,
+                      mode() WITHIN GROUP (ORDER BY lower(company_industry)) AS industry
+               FROM contacts WHERE lower(trim(company_name)) = lower(trim(%s))""",
+            (company_name,),
+        ) or {}
+        size = size or own.get("size")
+        industry = industry or own.get("industry")
 
     p0 = stats["p0"]
     bucket = _size_bucket(size)
@@ -270,17 +282,52 @@ def company_profile(people: list, stats: dict) -> dict:
 # ---------- 4. Known-contact cross-check ----------
 
 def known_contacts_index() -> dict:
+    """Exact full-name index (works when Apollo returns unmasked names) plus
+    the raw rows for fuzzy matching against obfuscated results."""
     rows = db.query_all(
-        """SELECT c.uid, c.first_name, c.last_name, c.responded, c.outcome,
-                  coalesce(v.n, 0) AS visit_count
+        """SELECT c.uid, c.first_name, c.last_name, c.company_name, c.responded,
+                  c.outcome, coalesce(v.n, 0) AS visit_count
            FROM contacts c
            LEFT JOIN (SELECT uid, count(*) AS n FROM visits GROUP BY uid) v ON v.uid = c.uid
-           WHERE c.first_name IS NOT NULL AND c.last_name IS NOT NULL"""
+           WHERE c.first_name IS NOT NULL"""
     )
-    return {
+    exact = {
         f"{(r['first_name'] or '').strip().lower()} {(r['last_name'] or '').strip().lower()}": r
         for r in rows
+        if r["last_name"]
     }
+    return {"exact": exact, "rows": rows}
+
+
+def _obfuscated_match(last_name: str, obfuscated: str) -> bool:
+    """Apollo masks last names like 'Ve***o' — match on visible prefix/suffix."""
+    if not last_name or not obfuscated or "*" not in obfuscated:
+        return False
+    parts = obfuscated.split("*")
+    prefix, suffix = parts[0].lower(), parts[-1].lower()
+    l = last_name.strip().lower()
+    return bool(prefix or suffix) and l.startswith(prefix) and l.endswith(suffix)
+
+
+def match_known(person: dict, known: dict, company_name: str):
+    first = (person.get("first_name") or "").strip().lower()
+    last = (person.get("last_name") or "").strip().lower()
+    if first and last:
+        hit = known["exact"].get(f"{first} {last}")
+        if hit:
+            return hit, False
+    # fuzzy: same first name at the target company, masked last name compatible
+    obf = person.get("last_name_obfuscated") or ""
+    company = company_name.strip().lower()
+    candidates = [
+        r for r in known["rows"]
+        if (r["first_name"] or "").strip().lower() == first
+        and company and company in (r["company_name"] or "").strip().lower()
+        and (_obfuscated_match(r["last_name"] or "", obf) or not r["last_name"])
+    ]
+    if len(candidates) == 1:
+        return candidates[0], True
+    return None, False
 
 
 # ---------- 5. Orchestration ----------
@@ -300,8 +347,9 @@ async def find_prospects(job_description: str) -> dict:
     stats = await run_in_threadpool(load_segment_stats)
     known = await run_in_threadpool(known_contacts_index)
 
+    company = parsed["company_name"]
     all_people = [p for group in results for p in group]
-    profile = company_profile(all_people, stats)
+    profile = await run_in_threadpool(company_profile, all_people, stats, company)
 
     seen_ids = set()
     categories = []
@@ -312,18 +360,20 @@ async def find_prospects(job_description: str) -> dict:
             if pid in seen_ids:
                 continue  # cross-category dedupe: first category wins
             seen_ids.add(pid)
-            name = p.get("name") or f"{p.get('first_name', '')} {p.get('last_name', '')}".strip()
-            match = known.get(name.strip().lower())
+            match, fuzzy = match_known(p, known, company)
             cards.append({
                 "id": pid,
-                "name": name,
+                "name": _display_name(p),
                 "title": p.get("title"),
                 "linkedin_url": p.get("linkedin_url"),
+                "linkedin_search_url": _linkedin_search_url(p, company),
                 "country": p.get("country"),
                 "seniority": infer_seniority(p),
                 "score": score_person(p, stats),
                 "known": {
                     "uid": match["uid"],
+                    "name": f"{match['first_name']} {match['last_name'] or ''}".strip(),
+                    "fuzzy": fuzzy,
                     "clicked": match["visit_count"] > 0,
                     "responded": match["responded"] is True,
                     "outcome": match["outcome"],
@@ -333,3 +383,23 @@ async def find_prospects(job_description: str) -> dict:
         categories.append({"key": key, "label": label, "people": cards})
 
     return {"parsed": parsed, "company_profile": profile, "categories": categories}
+
+
+def _display_name(p: dict) -> str:
+    first = (p.get("first_name") or "").strip()
+    last = (p.get("last_name") or "").strip()
+    if last:
+        return f"{first} {last}".strip()
+    obf = p.get("last_name_obfuscated") or ""
+    prefix = obf.split("*")[0]
+    if prefix:
+        return f"{first} {prefix}."
+    return p.get("name") or first or "Unknown"
+
+
+def _linkedin_search_url(p: dict, company: str) -> str:
+    """Free fallback when Apollo hides the profile URL: a LinkedIn people
+    search for this person's first name + title + company."""
+    terms = " ".join(x for x in [(p.get("first_name") or "").strip(),
+                                 (p.get("title") or "").strip(), company] if x)
+    return f"https://www.linkedin.com/search/results/people/?keywords={quote_plus(terms)}"
