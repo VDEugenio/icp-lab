@@ -46,6 +46,12 @@ Two one-time steps, then the Replies card appears on the Contacts tab.
 
 **1. Google OAuth credentials + refresh token**
 
+Reusing an existing project that already has the Gmail API enabled and a
+consent screen configured (this is what was actually done — the Job
+Application Tracker project) skips straight to step 3; any Desktop-app
+OAuth client in that project works, and minting a new refresh token does
+not invalidate the other app's tokens.
+
 1. [Google Cloud Console](https://console.cloud.google.com/) → create (or
    reuse) a project → **APIs & Services → Library** → enable **Gmail API**.
 2. **APIs & Services → OAuth consent screen**: External, add

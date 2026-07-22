@@ -154,7 +154,11 @@ How a scan works (`backend/replies.py`):
 2. The sender's name is parsed from the `"X via LinkedIn"` From header or
    the subject line. Unparseable notifications are stored as `ignored`.
 3. The name is matched against contacts — normalized for case, whitespace,
-   and accents (so "Núñez" matches "Nunez"):
+   and accents (so "Núñez" matches "Nunez"), and stripped of the
+   decorations LinkedIn display names carry but contact names don't:
+   credential suffixes ("Amanpreet Kaur, Ph.D.", "John Smith MBA"),
+   pronoun parentheticals ("(She/Her)"), and emoji. Verified against the
+   real backfill — 125/125 notifications parsed:
    - **Exactly one exact full-name match → auto-applied**: `responded =
      true`, `responded_at` = the email's date. An already-responded contact
      is never restamped, so re-scans and second messages are harmless.
