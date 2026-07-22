@@ -800,18 +800,40 @@ function prospectCard(p) {
     row.appendChild(chip);
   }
 
-  // Apollo's free search often hides the profile URL — fall back to a
-  // LinkedIn people-search for name + title + company
-  const url = p.linkedin_url || p.linkedin_search_url;
-  if (url) {
+  if (p.linkedin_url) {
     const btn = document.createElement('a');
     btn.className = 'p-linkedin';
-    btn.href = url;
-    btn.textContent = p.linkedin_url ? 'LinkedIn ↗' : 'Find on LinkedIn ↗';
+    btn.href = p.linkedin_url;
+    btn.textContent = 'LinkedIn ↗';
     btn.addEventListener('click', (e) => {
       e.preventDefault();
-      window.open(url, '_blank', 'noopener,noreferrer,width=1250,height=950');
+      window.open(p.linkedin_url, '_blank', 'noopener,noreferrer,width=1250,height=950');
       div.classList.add('visited'); // dim so you don't re-visit by accident
+    });
+    row.appendChild(btn);
+  } else {
+    // Apollo's free search hides the profile URL; the real one costs 1 credit
+    // via people/match — the click on this button IS the confirmation
+    const btn = document.createElement('button');
+    btn.className = 'p-linkedin p-reveal';
+    btn.type = 'button';
+    btn.textContent = 'Reveal · 1 credit';
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Revealing…';
+      try {
+        const d = await api('/api/prospect-reveal', {
+          method: 'POST',
+          body: JSON.stringify({ id: p.id }),
+        });
+        Object.assign(p, d); // real name, direct URL, country, re-score
+        div.replaceWith(prospectCard(p));
+        toast(d.linkedin_url ? 'Revealed' : 'Revealed, but Apollo has no LinkedIn URL for them', !d.linkedin_url);
+      } catch (err) {
+        toast(`Reveal failed: ${err.message}`, true);
+        btn.disabled = false;
+        btn.textContent = 'Reveal · 1 credit';
+      }
     });
     row.appendChild(btn);
   }

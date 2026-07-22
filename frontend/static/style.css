@@ -289,6 +289,11 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); 
   padding: 3px 10px; text-decoration: none !important; cursor: pointer;
 }
 .p-linkedin.disabled { background: var(--baseline); pointer-events: none; }
+.p-reveal {
+  background: none; color: var(--accent) !important;
+  border: 1px solid var(--accent); font: inherit; font-size: 12px; font-weight: 600;
+}
+.p-reveal:disabled { opacity: 0.6; cursor: default; }
 
 /* ---------- contacts ---------- */
 .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }

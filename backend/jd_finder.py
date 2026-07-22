@@ -397,6 +397,52 @@ def _display_name(p: dict) -> str:
     return p.get("name") or first or "Unknown"
 
 
+async def reveal_person(person_id: str) -> dict:
+    """Enrich one person via Apollo people/match — COSTS 1 CREDIT. Only ever
+    called from the explicit per-card Reveal button; the click is the
+    confirmation. Returns the real profile URL, full name, and a re-score
+    now that country is known."""
+    payload = {"id": person_id, "reveal_personal_emails": False}
+    async with httpx.AsyncClient() as client:
+        try:
+            r = await client.post(
+                f"{APOLLO_BASE}/people/match",
+                json=payload, headers=_apollo_headers(), timeout=APOLLO_TIMEOUT,
+            )
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"Apollo network error: {type(e).__name__}")
+    if r.status_code >= 400:
+        raise HTTPException(502, f"Apollo reveal failed ({r.status_code}): {r.text[:200]}")
+    person = r.json().get("person") or {}
+    if not person:
+        raise HTTPException(502, "Apollo returned no person for this id")
+
+    from starlette.concurrency import run_in_threadpool
+
+    stats = await run_in_threadpool(load_segment_stats)
+    known = await run_in_threadpool(known_contacts_index)
+
+    name = f"{person.get('first_name') or ''} {person.get('last_name') or ''}".strip()
+    match = known["exact"].get(name.lower()) if name else None
+    return {
+        "name": name or person.get("name") or "Unknown",
+        "title": person.get("title"),
+        "linkedin_url": person.get("linkedin_url"),
+        "country": person.get("country"),
+        "seniority": infer_seniority(person),
+        "score": score_person(person, stats),
+        "known": {
+            "uid": match["uid"],
+            "name": name,
+            "fuzzy": False,
+            "clicked": match["visit_count"] > 0,
+            "responded": match["responded"] is True,
+            "outcome": match["outcome"],
+        } if match else None,
+        "revealed": True,
+    }
+
+
 def _linkedin_search_url(p: dict, company: str) -> str:
     """Free fallback when Apollo hides the profile URL: a LinkedIn people
     search for this person's first name + title + company."""

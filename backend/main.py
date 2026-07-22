@@ -156,6 +156,18 @@ async def jd_search(body: JDSearchBody):
     return await jd_finder.find_prospects(body.job_description)
 
 
+class RevealBody(BaseModel):
+    id: str
+
+
+@app.post("/api/prospect-reveal", dependencies=protected)
+async def prospect_reveal(body: RevealBody):
+    """Spends 1 Apollo credit. Only triggered by the explicit Reveal button."""
+    import jd_finder
+
+    return await jd_finder.reveal_person(body.id)
+
+
 # ---------- the only write path ----------
 
 class ContactUpdate(BaseModel):
