@@ -127,6 +127,51 @@ triggered by the explicit Reveal button. Calls Apollo `people/match` and
 returns the card replacement: real `name`, `linkedin_url`, `country`,
 re-computed `score`, exact-name `known` match, `"revealed": true`.
 
+## Reply scanner
+
+All hidden (404-free, but empty/`configured: false`) until the Gmail env
+vars are set — see [operations.md](operations.md#reply-scanner-setup).
+
+### `GET /api/replies`
+State for the Replies card on the Contacts tab:
+```json
+{
+  "configured": true, "table_ready": true,
+  "last_scan": "2026-07-21T18:02:11+00:00",
+  "pending": [{"gmail_id": "18c...", "sender_name": "Jake Verano",
+      "received_at": "...", "snippet": "Hey Vaughn, thanks for...",
+      "candidates": [{"uid": "a1x", "name": "Jake Verano",
+                       "company": "Glean", "responded": false}]}],
+  "recent_auto": [{"gmail_id": "...", "sender_name": "...",
+      "received_at": "...", "matched_uid": "b2y",
+      "matched_name": "...", "status": "auto_applied"}]
+}
+```
+
+### `POST /api/replies/scan`
+Body `{"days": 30, "auto": false}` (days clamped to 1–365). Searches Gmail
+for LinkedIn message notifications, processes ones not yet in
+`reply_events`, and **auto-applies exact single-contact name matches**
+(sets `responded = true`, `responded_at` = the email's date; never restamps
+an already-responded contact). Ambiguous matches become `pending`.
+`auto: true` (the quiet page-load trigger) is throttled server-side to one
+scan per 30 minutes and returns `{"throttled": true}` otherwise. Returns:
+```json
+{"throttled": false, "new_events": 4,
+ "auto_applied": [{"sender_name": "Jake Verano", "uid": "a1x"}],
+ "pending_new": 1, "no_match_new": 1, "ignored_new": 1}
+```
+503 with a human-readable reason when Gmail isn't configured, the token is
+revoked, or `reply_events` doesn't exist yet.
+
+### `POST /api/replies/{gmail_id}/confirm`
+Body `{"uid": "a1x"}`. Applies a pending event to the chosen contact (same
+responded/responded_at semantics as the scan) and marks it `confirmed`.
+404 if the event isn't pending; 400 for an unknown uid.
+
+### `POST /api/replies/{gmail_id}/dismiss`
+Marks a pending event `dismissed` (no contact write). 404 if not pending.
+
 ## outreach-backend proxies
 
 Contact creation and contacted-stamping go through outreach-backend so uid

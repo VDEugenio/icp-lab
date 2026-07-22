@@ -46,6 +46,9 @@ icp-lab/
 │   ├── queries.py        all analytics SQL + the only DB write path
 │   ├── jd_finder.py      Prospect tab: Claude JD parse, Apollo search,
 │   │                     ICP scoring, reveal
+│   ├── replies.py        Reply scanner: Gmail LinkedIn notifications →
+│   │                     responded, review queue in reply_events
+│   ├── gmail_auth.py     CLI helper: one-time Gmail OAuth (refresh token)
 │   └── hash_password.py  CLI helper: generates DASHBOARD_PASSWORD_HASH
 ├── frontend/
 │   ├── index.html        the dashboard shell (all tabs)
@@ -113,7 +116,33 @@ GRANT UPDATE (
 
 Deliberately **not** updatable, even by a bug: `uid` (tracking id),
 `created_at`, `apollo_raw` (raw Apollo response), `linkedin_url`. No INSERT
-or DELETE anywhere; `visits` is fully read-only.
+or DELETE anywhere on the shared tables; `visits` is fully read-only.
+
+### The reply_events table (icp-lab's own state)
+
+The reply scanner needs one table of its own — one row per processed Gmail
+message, so scans are idempotent and review decisions persist. The `icp_lab`
+role can't CREATE TABLE, so this is a one-time statement run as the database
+owner (same session type as the role setup):
+
+```sql
+CREATE TABLE IF NOT EXISTS reply_events (
+    gmail_id        TEXT PRIMARY KEY,     -- Gmail message id (dedupe key)
+    sender_name     TEXT NOT NULL,        -- parsed from the notification
+    received_at     TIMESTAMPTZ,          -- the email's date
+    snippet         TEXT,
+    status          TEXT NOT NULL,        -- auto_applied | pending | confirmed
+                                          -- | dismissed | no_match | ignored
+    matched_uid     TEXT,                 -- contact it was applied to
+    candidate_uids  TEXT,                 -- comma-joined, for pending review
+    scanned_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+GRANT SELECT, INSERT, UPDATE ON reply_events TO icp_lab;
+```
+
+No DELETE grant — events are only ever re-statused. Writes to `contacts`
+still go exclusively through `queries.update_contact()`; `replies.py` only
+writes its own table plus that one call path.
 
 ## Connection pooling
 

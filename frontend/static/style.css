@@ -342,6 +342,28 @@ td input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accen
 #toast.show { opacity: 1; }
 #toast.err { background: var(--danger); color: #fff; }
 
+/* ---------- replies (Gmail reply scanner) ---------- */
+#replies-scan {
+  border: 1px solid var(--border); background: none; color: var(--ink-2);
+  border-radius: 7px; padding: 7px 14px; font: inherit; cursor: pointer;
+}
+#replies-scan:disabled { opacity: .6; cursor: default; }
+#replies-card select {
+  font: inherit; font-size: 12.5px; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; max-width: 260px;
+}
+.reply-actions { white-space: nowrap; }
+.reply-actions .save {
+  background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+  padding: 5px 12px; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.reply-actions .nav-btn {
+  border: 1px solid var(--border); background: none; color: var(--ink-2);
+  border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 12.5px;
+  cursor: pointer; margin-left: 6px;
+}
+.reply-actions button:disabled { opacity: .6; cursor: default; }
+
 /* ---------- login ---------- */
 .login-body { display: grid; place-items: center; min-height: 100vh; }
 .login-card {

@@ -168,6 +168,51 @@ async def prospect_reveal(body: RevealBody):
     return await jd_finder.reveal_person(body.id)
 
 
+# ---------- reply scanner (Gmail LinkedIn notifications → responded) ----------
+
+import replies
+
+
+@app.get("/api/replies", dependencies=protected)
+def replies_status():
+    return replies.status()
+
+
+class ScanBody(BaseModel):
+    days: int = 30
+    auto: bool = False  # page-load scans are throttled server-side
+
+
+@app.post("/api/replies/scan", dependencies=protected)
+def replies_scan(body: ScanBody):
+    try:
+        return replies.scan(days=max(1, min(body.days, 365)), auto=body.auto)
+    except replies.ScanError as e:
+        raise HTTPException(503, str(e))
+
+
+class ReplyConfirmBody(BaseModel):
+    uid: str
+
+
+@app.post("/api/replies/{gmail_id}/confirm", dependencies=protected)
+def reply_confirm(gmail_id: str, body: ReplyConfirmBody):
+    try:
+        return replies.confirm(gmail_id, body.uid)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/replies/{gmail_id}/dismiss", dependencies=protected)
+def reply_dismiss(gmail_id: str):
+    try:
+        return replies.dismiss(gmail_id)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+
+
 # ---------- outreach-backend proxies (contact creation + tracking links) ----------
 # Contact creation always goes through outreach-backend so UID generation
 # stays in one place — icp-lab never inserts contacts itself.

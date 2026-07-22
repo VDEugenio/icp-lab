@@ -139,6 +139,50 @@ Rules:
   placeholder-filled message.
 - Tracking links come back as `https://vaughneugenio.com/r/{uid}` (~31 chars).
 
+## Reply scanner (Replies card on the Contacts tab)
+
+`responded` used to be 100% manual. The scanner semi-automates it from the
+one reliable, API-accessible trace a LinkedIn DM reply leaves: LinkedIn's
+**"X sent you a message" notification emails in Gmail** (read-only scope).
+
+How a scan works (`backend/replies.py`):
+
+1. Gmail search, restricted by sender + subject phrases to message
+   notifications only (invites, job alerts, and promos never enter the
+   pipeline). Every processed message id is recorded in `reply_events`, so
+   scans are idempotent.
+2. The sender's name is parsed from the `"X via LinkedIn"` From header or
+   the subject line. Unparseable notifications are stored as `ignored`.
+3. The name is matched against contacts — normalized for case, whitespace,
+   and accents (so "Núñez" matches "Nunez"):
+   - **Exactly one exact full-name match → auto-applied**: `responded =
+     true`, `responded_at` = the email's date. An already-responded contact
+     is never restamped, so re-scans and second messages are harmless.
+   - **Multiple exact matches, or near-misses only** (same first name +
+     last initial, or same last name + first initial) → a **pending** row
+     in the review queue with the candidates attached. A first-name-only
+     parse (some subjects say just "Cole just messaged you", and digest
+     Froms don't always carry the full name) never auto-applies — every
+     contact sharing that first name is offered as a candidate instead.
+   - **Nothing close → `no_match`**, stored so it isn't re-fetched. Every
+     scan re-evaluates stored no-matches against the *current* contacts
+     (locally, no Gmail calls) — so fixing a mangled name in the Enrich tab
+     retroactively catches that person's old reply notifications.
+4. Pending events appear in the Replies card: sender, date, snippet, a
+   candidate picker, and Confirm/Dismiss. Confirm applies the same
+   responded semantics; Dismiss records the decision without writing.
+
+Scans trigger two ways: quietly on dashboard load (throttled to one per
+30 minutes server-side) and via the **Scan Gmail (6 mo)** button, which
+looks back 180 days for the initial backfill.
+
+Honest limitations: a reply only gets caught if LinkedIn emailed a
+notification for it (if you read the DM first, LinkedIn may not email);
+invitation acceptances are deliberately *not* counted as responses; and
+email-channel replies aren't detected (the DB stores no email addresses).
+Those still need the manual checkbox — the scanner narrows the manual
+work, it doesn't replace the write path or the human judgment.
+
 ## Contacts tab
 
 Everyone in the DB: LinkedIn-linked names, title/company/target, channel

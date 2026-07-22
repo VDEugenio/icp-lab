@@ -19,7 +19,7 @@ both in code and by a least-privilege Postgres role.
 | **ICP finder** | Pick any combination of dimensions; every combo in the data ranked by click or response rate, low-n groups excluded |
 | **Enrich** | Manual data entry for contacts Apollo couldn't enrich — work queue sorted by missing fields, org autofill from companies already in the DB |
 | **Prospect** | Paste a job description → Claude extracts the company/role → Apollo finds people in four categories → each person scored against my own click history → reveal + copy outreach message with tracking link |
-| **Contacts** | Full table with inline editing of responded / responded-at / outcome |
+| **Contacts** | Full table with inline editing of responded / responded-at / outcome, plus the **reply scanner**: LinkedIn "sent you a message" notification emails in Gmail auto-mark exact-match contacts as responded; ambiguous matches wait in a one-click review queue |
 
 ## Documentation
 
@@ -45,5 +45,5 @@ Open http://localhost:8000 and sign in with your dashboard password.
 - **Backend**: FastAPI + psycopg2, Python 3.12 (`backend/`)
 - **Frontend**: static HTML/CSS/vanilla JS, no build step (`frontend/`), served by the same app
 - **Database**: Neon PostgreSQL (shared with outreach-backend), read via the restricted `icp_lab` role
-- **External**: Anthropic API (Claude Haiku 4.5, JD parsing), Apollo.io (people search + reveal), outreach-backend (contact creation + tracking links)
+- **External**: Anthropic API (Claude Haiku 4.5, JD parsing), Apollo.io (people search + reveal), outreach-backend (contact creation + tracking links), Gmail API (read-only, reply scanner)
 - **Deploy**: one Railway service — Procfile + requirements.txt + runtime.txt

@@ -10,6 +10,8 @@
 | `ANTHROPIC_API_KEY` | for Prospect | Claude API key (JD parsing, Haiku 4.5 — pennies per search) |
 | `APOLLO_API_KEY` | for Prospect | Apollo.io API key (people search free; reveal 1 credit/person) |
 | `OUTREACH_BACKEND_URL` | optional | Defaults to the production Railway URL of outreach-backend |
+| `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | for reply scanner | Google Cloud **Desktop app** OAuth client (see setup below) |
+| `GMAIL_REFRESH_TOKEN` | for reply scanner | Output of `python backend/gmail_auth.py` (read-only Gmail scope). All three unset → the feature hides itself |
 | `DEV_MODE` | local only | Any value → session cookie works over plain http. **Never set in production.** |
 
 Secrets hygiene: `.gitignore` covers `.env` (and `.env.*` except
@@ -38,6 +40,37 @@ To verify grants behave: reads succeed, granted-column updates succeed,
 `linkedin_url`/`uid`/`apollo_raw` updates and any INSERT/DELETE are denied
 with `InsufficientPrivilege`.
 
+## Reply scanner setup
+
+Two one-time steps, then the Replies card appears on the Contacts tab.
+
+**1. Google OAuth credentials + refresh token**
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → create (or
+   reuse) a project → **APIs & Services → Library** → enable **Gmail API**.
+2. **APIs & Services → OAuth consent screen**: External, add
+   vaughndde@gmail.com as a **test user** (Testing mode is fine — it's a
+   single-user app; no verification needed).
+3. **Credentials → Create credentials → OAuth client ID → Desktop app.**
+   Put the client id/secret in `.env` as `GMAIL_CLIENT_ID` /
+   `GMAIL_CLIENT_SECRET`.
+4. Run `python backend/gmail_auth.py` — browser consent for **read-only**
+   Gmail access → paste the printed `GMAIL_REFRESH_TOKEN` into `.env` and
+   the Railway variables (along with the id/secret).
+
+Note: refresh tokens for consent screens left in **Testing** mode expire
+after 7 days. To make it permanent, publish the consent screen
+(**Publish app** — no verification is required for the app to keep working
+with your own account; Google just shows an "unverified" interstitial
+during the one-time consent).
+
+**2. The state table** — run once as the database owner (the `icp_lab`
+role can't CREATE TABLE): the `CREATE TABLE reply_events` + `GRANT`
+statement in [architecture.md](architecture.md#the-reply_events-table-icp-labs-own-state).
+
+Verify: reload the dashboard → Contacts tab → the Replies card shows, and
+**Scan Gmail (6 mo)** reports scanned/auto-applied/pending counts.
+
 ## Deploying to Railway
 
 Same pattern as outreach-backend: Procfile + requirements.txt + runtime.txt.
@@ -45,7 +78,8 @@ Same pattern as outreach-backend: Procfile + requirements.txt + runtime.txt.
 1. Push the repo to GitHub (`VDEugenio/icp-lab`, public).
 2. Railway → New Service → Deploy from GitHub repo.
 3. Set variables: `DATABASE_URL` (icp_lab role), `DASHBOARD_PASSWORD_HASH`,
-   `SESSION_SECRET` (fresh one), `ANTHROPIC_API_KEY`, `APOLLO_API_KEY`.
+   `SESSION_SECRET` (fresh one), `ANTHROPIC_API_KEY`, `APOLLO_API_KEY`,
+   and the three `GMAIL_*` vars if the reply scanner is set up.
    Do **not** set `DEV_MODE`.
 4. Railway injects `PORT`; the Procfile binds to it. Health check: `/health`.
 
@@ -74,6 +108,13 @@ Notes:
 - One `claude-haiku-4-5` call per JD search (forced tool call,
   ~1k output tokens). Model choice mirrors the OutreachAssistant project.
 
+### Gmail (reply scanner)
+- Scope is `gmail.readonly` — the app can never send, modify, or delete
+  mail. Revoke any time at https://myaccount.google.com/permissions.
+- Scans are cheap (one search + metadata fetches for *new* notifications
+  only) and idempotent; the free Gmail API quota is far beyond this usage.
+- Auto page-load scans are throttled to one per 30 minutes in-process.
+
 ### outreach-backend
 - `POST /contacts` upserts (dedupe key: `linkedin_url`) and returns
   `{uid, tracking_url}`; links live on `vaughneugenio.com/r/{uid}`.
@@ -93,6 +134,10 @@ Notes:
 | Prospect search returns empty categories | Small company: Apollo may have only a handful of people and none match the generated titles (e.g. a 4-person startup). Not a bug — check the company on Apollo directly. |
 | Prospect cards all "Reveal · 1 credit" with no direct links | Expected — Apollo obfuscates free search results; see External services. |
 | `ANTHROPIC_API_KEY is not set` / `APOLLO_API_KEY is not set` | Add the keys to `.env` (local) or Railway variables, restart. |
+| Replies card doesn't show on the Contacts tab | The three `GMAIL_*` env vars aren't all set — the feature hides itself when unconfigured. |
+| Scan fails: "reply_events table missing" | Run the one-time CREATE TABLE + GRANT from architecture.md as the DB owner. |
+| Scan fails: "Gmail token refresh failed … invalid_grant" | Refresh token revoked or expired (consent screen left in Testing mode expires tokens after 7 days — publish the app). Re-run `python backend/gmail_auth.py`. |
+| A real reply wasn't caught | LinkedIn only emails a notification if you hadn't already read the DM; also invitation-accepted emails deliberately don't count. Tick the checkbox manually — the scanner is an assist, not the source of truth. |
 | Copy-message warns about >300 chars | Shorten the editable Role field in the parsed bar — that value feeds the template. |
 
 ## Development conventions

@@ -1084,8 +1084,158 @@ async function saveContact(tr, c, patch) {
   }
 }
 
+// ---------- replies (Gmail LinkedIn-notification scan) ----------
+
+let repliesState = null;
+
+async function loadReplies(kickScan = true) {
+  try {
+    repliesState = await api('/api/replies');
+  } catch {
+    return; // scanner is optional — never block the dashboard on it
+  }
+  renderReplies();
+  if (kickScan && repliesState.configured && repliesState.table_ready) autoScanReplies();
+}
+
+// quiet page-load scan; the server throttles these to one per 30 minutes
+async function autoScanReplies() {
+  try {
+    const s = await api('/api/replies/scan', { method: 'POST', body: JSON.stringify({ auto: true }) });
+    if (s.throttled) return;
+    afterScan(s);
+  } catch { /* quiet — the manual button surfaces errors */ }
+}
+
+function afterScan(s) {
+  if (s.auto_applied.length) {
+    toast(`${s.auto_applied.length} repl${s.auto_applied.length === 1 ? 'y' : 'ies'} auto-marked responded`);
+    loadContacts();
+    refreshAnalytics();
+  }
+  loadReplies(false);
+}
+
+document.getElementById('replies-scan').addEventListener('click', async () => {
+  const btn = document.getElementById('replies-scan');
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  try {
+    // manual scans look back further — useful for the initial backfill
+    const s = await api('/api/replies/scan', { method: 'POST', body: JSON.stringify({ days: 180 }) });
+    toast(`${s.new_events} new notification${s.new_events === 1 ? '' : 's'} · ${s.auto_applied.length} auto-applied · ${s.pending_new} to review`);
+    afterScan(s);
+  } catch (err) {
+    toast(`Scan failed: ${err.message}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Scan Gmail (6 mo)';
+  }
+});
+
+function renderReplies() {
+  const card = document.getElementById('replies-card');
+  const sub = document.getElementById('replies-sub');
+  const body = document.getElementById('replies-body');
+  if (!repliesState || !repliesState.configured) { card.hidden = true; return; }
+  card.hidden = false;
+
+  if (!repliesState.table_ready) {
+    sub.textContent = 'Gmail is connected, but the reply_events table is missing — run the one-time SQL in docs/architecture.md.';
+    body.replaceChildren();
+    return;
+  }
+  sub.textContent = 'LinkedIn "sent you a message" emails in Gmail. An exact name match to one contact flips responded automatically; ambiguous matches wait here.'
+    + (repliesState.last_scan ? ` Last scan: ${new Date(repliesState.last_scan).toLocaleString()}.` : '');
+
+  body.replaceChildren();
+
+  if (!repliesState.pending.length) {
+    const d = document.createElement('div');
+    d.className = 'loading';
+    d.textContent = 'No replies awaiting review.';
+    body.appendChild(d);
+  } else {
+    const table = document.createElement('table');
+    table.innerHTML = '<thead><tr><th>Sender</th><th>Received</th><th>Message</th><th>Match to</th><th></th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    for (const ev of repliesState.pending) tbody.appendChild(replyRow(ev));
+    table.appendChild(tbody);
+    body.appendChild(table);
+  }
+
+  if (repliesState.recent_auto.length) {
+    const recent = document.createElement('div');
+    recent.className = 'sub';
+    recent.style.marginTop = '10px';
+    recent.textContent = 'Recently applied: ' + repliesState.recent_auto.map((r) =>
+      `${r.sender_name || r.matched_name} → ${r.matched_name} (${dateStr(r.received_at)})`).join(' · ');
+    body.appendChild(recent);
+  }
+}
+
+function replyRow(ev) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><b>${esc(ev.sender_name)}</b></td>
+    <td>${dateStr(ev.received_at)}</td>
+    <td class="title-cell" title="${esc(ev.snippet || '')}">${esc(ev.snippet || '—')}</td>`;
+
+  // candidate picker — pending events always carry at least one candidate
+  const tdSel = document.createElement('td');
+  const sel = document.createElement('select');
+  for (const c of ev.candidates) {
+    const o = document.createElement('option');
+    o.value = c.uid;
+    o.textContent = `${c.name}${c.company ? ' · ' + c.company : ''} (${c.uid})`
+      + (c.responded ? ' — already responded' : '');
+    sel.appendChild(o);
+  }
+  tdSel.appendChild(sel);
+  tr.appendChild(tdSel);
+
+  const tdAct = document.createElement('td');
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'save';
+  confirmBtn.textContent = 'Confirm';
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true;
+    try {
+      await api(`/api/replies/${encodeURIComponent(ev.gmail_id)}/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({ uid: sel.value }),
+      });
+      toast('Marked responded');
+      loadContacts();
+      refreshAnalytics();
+      loadReplies(false);
+    } catch (err) {
+      toast(`Failed: ${err.message}`, true);
+      confirmBtn.disabled = false;
+    }
+  });
+  const dismissBtn = document.createElement('button');
+  dismissBtn.className = 'nav-btn';
+  dismissBtn.textContent = 'Dismiss';
+  dismissBtn.addEventListener('click', async () => {
+    dismissBtn.disabled = true;
+    try {
+      await api(`/api/replies/${encodeURIComponent(ev.gmail_id)}/dismiss`, { method: 'POST' });
+      loadReplies(false);
+    } catch (err) {
+      toast(`Failed: ${err.message}`, true);
+      dismissBtn.disabled = false;
+    }
+  });
+  tdAct.className = 'reply-actions';
+  tdAct.append(confirmBtn, dismissBtn);
+  tr.appendChild(tdAct);
+  return tr;
+}
+
 // ---------- init ----------
 
+loadReplies();
 loadStats();
 loadTimeseries();
 loadBreakdown();
