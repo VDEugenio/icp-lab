@@ -10,7 +10,7 @@ docs (`/docs`, `/openapi.json`) are deliberately disabled.
 |---|---|
 | `GET /` | Dashboard (redirects to `/login` when unauthenticated) |
 | `GET /login` | Sign-in page (redirects to `/` when authenticated) |
-| `GET /health` | `{"ok": true}` — unauthenticated, for Railway checks |
+| `GET /health` | `{"ok": true, "rev": "<deployed commit sha>"}` — unauthenticated, for Railway checks and deploy verification (`rev` is `"dev"` locally) |
 | `GET /static/*` | CSS/JS assets — unauthenticated (no data) |
 
 ## Auth
@@ -29,8 +29,8 @@ Clears the cookie.
 ### `GET /api/stats`
 ```json
 {
-  "overall":    {"contacted": 509, "clicked": 150, "responded": 0,
-                 "click_rate": 0.2947, "response_rate": 0.0},
+  "overall":    {"contacted": 509, "clicked": 99, "responded": 0,
+                 "click_rate": 0.1945, "response_rate": 0.0},
   "by_channel": [{"channel": "LinkedIn DM", ...same fields...}]
 }
 ```

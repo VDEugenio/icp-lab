@@ -2,6 +2,7 @@
 
 Run locally:  uvicorn backend.main:app --reload  (from the repo root)
 """
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,7 +44,8 @@ def login_page(request: Request):
 
 @app.get("/health", include_in_schema=False)
 def health():
-    return {"ok": True}
+    # rev: Railway injects the deployed commit sha; "dev" locally
+    return {"ok": True, "rev": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "dev")[:12]}
 
 
 # ---------- auth ----------

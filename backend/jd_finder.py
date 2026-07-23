@@ -161,7 +161,7 @@ def load_segment_stats() -> dict:
             SELECT {expr} AS grp, count(*) AS n,
                    count(*) FILTER (WHERE v.uid IS NOT NULL) AS clicked
             FROM contacts c
-            LEFT JOIN (SELECT DISTINCT uid FROM visits) v ON v.uid = c.uid
+            LEFT JOIN (SELECT DISTINCT uid FROM visits WHERE kind = 'human') v ON v.uid = c.uid
             GROUP BY 1
             """
         )
@@ -169,7 +169,7 @@ def load_segment_stats() -> dict:
 
     overall = db.query_one(
         """SELECT count(*) AS n, count(*) FILTER (WHERE v.uid IS NOT NULL) AS clicked
-           FROM contacts c LEFT JOIN (SELECT DISTINCT uid FROM visits) v ON v.uid = c.uid"""
+           FROM contacts c LEFT JOIN (SELECT DISTINCT uid FROM visits WHERE kind = 'human') v ON v.uid = c.uid"""
     )
     size_case = (
         "CASE WHEN c.company_size IS NULL THEN 'Unknown'"
@@ -289,7 +289,7 @@ def known_contacts_index() -> dict:
         """SELECT c.uid, c.first_name, c.last_name, c.company_name, c.responded,
                   c.outcome, coalesce(v.n, 0) AS visit_count
            FROM contacts c
-           LEFT JOIN (SELECT uid, count(*) AS n FROM visits GROUP BY uid) v ON v.uid = c.uid
+           LEFT JOIN (SELECT uid, count(*) AS n FROM visits WHERE kind = 'human' GROUP BY uid) v ON v.uid = c.uid
            WHERE c.first_name IS NOT NULL"""
     )
     exact = {

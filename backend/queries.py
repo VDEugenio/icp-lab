@@ -13,6 +13,7 @@ _VISITS_JOIN = """
 LEFT JOIN (
     SELECT uid, count(*) AS visit_count, max(visited_at) AS last_visit
     FROM visits
+    WHERE kind = 'human'
     GROUP BY uid
 ) v ON v.uid = c.uid
 """

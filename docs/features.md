@@ -4,8 +4,12 @@
 
 - **Contacted** — every row in `contacts` counts (decision: no filtering of
   manual links or never-contacted rows; the n= labels make dilution visible).
-- **Clicked** — the contact has ≥ 1 row in `visits` (a tracking-link click).
-  Raw counts; own/test clicks are *not* filtered (decision).
+- **Clicked** — the contact has ≥ 1 **human** row in `visits` (a
+  tracking-link click with `kind = 'human'`). Bot visits — link-preview
+  crawlers, email scanners, ~87% of raw rows — are classified by
+  outreach-backend and excluded everywhere (clicked flags, visit counts,
+  ICP scoring). Vaughn's own human test clicks are still *not* filtered
+  (decision).
 - **Responded** — `responded IS TRUE` (recorded manually in this app).
 - **Unknown** — NULL/empty dimension values group into an explicit "Unknown"
   bucket rather than disappearing.
@@ -94,7 +98,7 @@ The score is an **estimated click rate**, built only from this database:
 ```
 expected = p0 × lift(seniority) × lift(country)        clamped to [2%, 95%]
 
-where  p0            = overall click rate (~29.5%)
+where  p0            = overall human click rate (~19%)
        rate(seg)     = (clicks + k·p0) / (n + k)       k = 15  (shrinkage)
        lift(seg)     = rate(seg) / p0                  clamped to [0.5, 2.0]
 ```
