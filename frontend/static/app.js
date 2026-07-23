@@ -103,7 +103,11 @@ function renderFunnel(o) {
   document.getElementById('funnel').innerHTML = stages.map(([name, val, color, inkOnBar], i) => {
     const w = Math.max((val / max) * 100, 0.5);
     const prev = i > 0 ? stages[i - 1][1] : null;
-    const conv = prev ? ` <span class="conv">${pct(val / prev)} of ${esc(stages[i - 1][0].toLowerCase())}</span>` : '';
+    let conv = prev ? ` <span class="conv">${pct(val / prev)} of ${esc(stages[i - 1][0].toLowerCase())}</span>` : '';
+    // from stage 3 on, also show the rate against the full contacted base
+    if (i > 1 && o.contacted) {
+      conv += ` <span class="conv">· ${pct(val / o.contacted)} of contacted</span>`;
+    }
     // label sits inside the bar when it fits, otherwise just right of it
     const inside = w > 45;
     const labelStyle = inside ? `left:0;color:${inkOnBar}` : `left:${w}%;color:var(--ink)`;
