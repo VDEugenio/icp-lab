@@ -96,9 +96,10 @@ invalid enum values, 422 for type errors.
 ## Prospect tab
 
 ### `POST /api/jd-search`
-Body `{"job_description": "..."}`. Runs the full pipeline (Claude parse →
-4× Apollo search → scoring → DB cross-check). ~8s typical. **No Apollo
-credits consumed.**
+Body `{"job_description": "...", "per_category": 15}` (`per_category`
+optional, clamped to 1–25 — the max people each Apollo search returns).
+Runs the full pipeline (Claude parse → 4× Apollo search → scoring → DB
+cross-check). ~8s typical. **No Apollo credits consumed.**
 ```json
 {
   "parsed": {"company_name": ..., "role_title": ..., "department": ...,

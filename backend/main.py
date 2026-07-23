@@ -145,6 +145,7 @@ def enrich_meta():
 
 class JDSearchBody(BaseModel):
     job_description: str
+    per_category: int = 15
 
 
 @app.post("/api/jd-search", dependencies=protected)
@@ -153,7 +154,8 @@ async def jd_search(body: JDSearchBody):
         raise HTTPException(400, "job_description is empty")
     import jd_finder
 
-    return await jd_finder.find_prospects(body.job_description)
+    per_category = max(1, min(25, body.per_category))
+    return await jd_finder.find_prospects(body.job_description, per_category)
 
 
 class RevealBody(BaseModel):

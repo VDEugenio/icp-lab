@@ -66,8 +66,9 @@ Pipeline (modeled on the OutreachAssistant project, upgraded with scoring):
    LinkedIn-title lists for four categories: peers, hiring managers,
    adjacent leaders (e.g. sales directors for an SE role), recruiters.
 2. **Search** — four parallel Apollo `mixed_people/api_search` calls
-   (free, no credits), 15 per category, deduped across categories
-   (peer > manager > adjacent > recruiter priority).
+   (free, no credits), deduped across categories
+   (peer > manager > adjacent > recruiter priority). The **max per
+   category** control (1–25, default 15) caps each search.
 3. **Score** — every person gets an estimated click rate (see below).
 4. **Cross-check** — results are matched against existing contacts:
    exact full-name match when Apollo returns real names, otherwise fuzzy
@@ -76,7 +77,11 @@ Pipeline (modeled on the OutreachAssistant project, upgraded with scoring):
 5. **Reveal** (1 Apollo credit each, explicit button per card or
    Reveal-all per column with a confirm dialog) — `people/match` returns the
    real LinkedIn URL, full name, and country; the card re-scores with
-   country filled in.
+   country filled in. The **auto-reveal toggle** next to the search button
+   reveals every result right after the search with no further prompts —
+   the toggle itself is the consent, and its label/tooltip state the cost
+   (1 credit per person, up to 4 × max-per-category per search). Default off,
+   resets on page reload.
 6. **Copy msg + LinkedIn** — one click on a revealed card: create/dedupe the
    contact via outreach-backend (returns uid + tracking link), build the
    outreach message, copy to clipboard, open the profile window, stamp the

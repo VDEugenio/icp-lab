@@ -741,16 +741,21 @@ const jdStatus = document.getElementById('jd-status');
 jdGo.addEventListener('click', async () => {
   const jd = document.getElementById('jd-input').value.trim();
   if (!jd) { toast('Paste a job description first', true); return; }
+  const perCategory = Math.max(1, Math.min(25,
+    parseInt(document.getElementById('jd-max').value, 10) || 15));
   jdGo.disabled = true;
   jdStatus.textContent = 'Parsing JD with Claude, then searching Apollo… (~15s)';
   document.getElementById('jd-results').innerHTML = '';
   try {
     const data = await api('/api/jd-search', {
       method: 'POST',
-      body: JSON.stringify({ job_description: jd }),
+      body: JSON.stringify({ job_description: jd, per_category: perCategory }),
     });
     renderProspects(data);
     jdStatus.textContent = '';
+    if (document.getElementById('jd-autoreveal').checked) {
+      await autoRevealAll(data.categories);
+    }
   } catch (err) {
     jdStatus.textContent = '';
     document.getElementById('jd-results').innerHTML =
@@ -759,6 +764,34 @@ jdGo.addEventListener('click', async () => {
     jdGo.disabled = false;
   }
 });
+
+// The auto-reveal toggle is the consent: with it on, every unrevealed result
+// is revealed right after the search — 1 Apollo credit per person.
+async function autoRevealAll(categories) {
+  const targets = categories.flatMap((c) => c.people).filter((p) => !p.linkedin_url && !p.revealed);
+  if (!targets.length) return;
+  const host = document.getElementById('jd-results');
+  let done = 0, failed = 0;
+  for (const p of targets) {
+    jdStatus.textContent = `Auto-revealing ${done + failed + 1}/${targets.length} (1 credit each)…`;
+    try {
+      const d = await api('/api/prospect-reveal', {
+        method: 'POST',
+        body: JSON.stringify({ id: p.id }),
+      });
+      Object.assign(p, d);
+      const el = host.querySelector(`[data-pid="${CSS.escape(p.id)}"]`);
+      if (el) el.replaceWith(prospectCard(p));
+      done++;
+    } catch {
+      failed++;
+    }
+  }
+  // drop the now-pointless per-column Reveal-all buttons
+  host.querySelectorAll('.reveal-all').forEach((b) => b.remove());
+  jdStatus.textContent = '';
+  toast(failed ? `Auto-revealed ${done}, ${failed} failed` : `Auto-revealed ${done} people`, failed > 0);
+}
 
 function scoreTooltip(score, name) {
   return ttRows(`${name} — est. click rate ${score.pct}%`, [

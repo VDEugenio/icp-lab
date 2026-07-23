@@ -118,11 +118,12 @@ async def parse_jd(job_description: str) -> dict:
 
 # ---------- 2. Apollo people search (free — no credits) ----------
 
-async def search_people(client: httpx.AsyncClient, company: str, titles: list) -> list:
+async def search_people(client: httpx.AsyncClient, company: str, titles: list,
+                        per_page: int = PER_CATEGORY_RESULTS) -> list:
     payload = {
         "q_organization_name": company,
         "person_titles": titles,
-        "per_page": PER_CATEGORY_RESULTS,
+        "per_page": per_page,
         "page": 1,
     }
     try:
@@ -332,12 +333,13 @@ def match_known(person: dict, known: dict, company_name: str):
 
 # ---------- 5. Orchestration ----------
 
-async def find_prospects(job_description: str) -> dict:
+async def find_prospects(job_description: str, per_category: int = PER_CATEGORY_RESULTS) -> dict:
     parsed = await parse_jd(job_description)
 
     async with httpx.AsyncClient() as client:
         results = await asyncio.gather(
-            *(search_people(client, parsed["company_name"], parsed[f"search_titles_{key}"])
+            *(search_people(client, parsed["company_name"], parsed[f"search_titles_{key}"],
+                            per_page=per_category)
               for key, _ in CATEGORIES)
         )
 

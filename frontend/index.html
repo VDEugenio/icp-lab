@@ -114,6 +114,10 @@
       <textarea id="jd-input" rows="8" placeholder="Paste the job description here…"></textarea>
       <div class="enrich-actions" style="margin-top:10px">
         <button class="save" id="jd-go">Find people</button>
+        <label class="jd-opt">Max per category
+          <input type="number" id="jd-max" value="15" min="1" max="25"></label>
+        <label class="jd-opt" title="After the search, every result is revealed automatically via Apollo people/match — 1 credit per person, up to 4 × max-per-category credits per search.">
+          <input type="checkbox" id="jd-autoreveal"> Auto-reveal all (1 credit each)</label>
         <span class="hint" id="jd-status"></span>
       </div>
     </div>
