@@ -49,8 +49,11 @@ def check_login(password: str) -> bool:
     now = time.time()
     if now < _failures["locked_until"]:
         raise HTTPException(429, "Too many failed attempts; try again later.")
+    # comma-separated list: any listed hash grants access, so extra
+    # passwords can be added or revoked independently
     stored = os.environ.get("DASHBOARD_PASSWORD_HASH", "")
-    if stored and verify_password(password, stored):
+    hashes = [h.strip() for h in stored.split(",") if h.strip()]
+    if any(verify_password(password, h) for h in hashes):
         _failures["count"] = 0
         return True
     _failures["count"] += 1
