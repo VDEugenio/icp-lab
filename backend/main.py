@@ -56,17 +56,18 @@ class LoginBody(BaseModel):
 
 @app.post("/api/login")
 def login(body: LoginBody, response: Response):
-    if not auth.check_login(body.password):
+    role = auth.check_login(body.password)
+    if role is None:
         raise HTTPException(401, "Wrong password")
     response.set_cookie(
         auth.SESSION_COOKIE,
-        auth.create_session_token(),
+        auth.create_session_token(role),
         max_age=auth.SESSION_MAX_AGE,
         httponly=True,
         secure=auth.cookie_secure(),
         samesite="lax",
     )
-    return {"ok": True}
+    return {"ok": True, "role": role}
 
 
 @app.post("/api/logout")
@@ -78,6 +79,7 @@ def logout(response: Response):
 # ---------- read APIs ----------
 
 protected = [Depends(auth.require_auth)]
+owner_only = [Depends(auth.require_owner)]  # Gmail-backed reply scanner
 
 
 def _rate(n, d):
@@ -178,7 +180,11 @@ import replies
 
 
 @app.get("/api/replies", dependencies=protected)
-def replies_status():
+def replies_status(request: Request):
+    # Guests never see the reply scanner: report "unconfigured" so the
+    # frontend hides the card entirely (it contains Gmail snippets).
+    if auth.session_role(request) != "owner":
+        return {"configured": False}
     return replies.status()
 
 
@@ -187,7 +193,7 @@ class ScanBody(BaseModel):
     auto: bool = False  # page-load scans are throttled server-side
 
 
-@app.post("/api/replies/scan", dependencies=protected)
+@app.post("/api/replies/scan", dependencies=owner_only)
 def replies_scan(body: ScanBody):
     try:
         return replies.scan(days=max(1, min(body.days, 365)), auto=body.auto)
@@ -199,7 +205,7 @@ class ReplyConfirmBody(BaseModel):
     uid: str
 
 
-@app.post("/api/replies/{gmail_id}/confirm", dependencies=protected)
+@app.post("/api/replies/{gmail_id}/confirm", dependencies=owner_only)
 def reply_confirm(gmail_id: str, body: ReplyConfirmBody):
     try:
         return replies.confirm(gmail_id, body.uid)
@@ -209,7 +215,7 @@ def reply_confirm(gmail_id: str, body: ReplyConfirmBody):
         raise HTTPException(400, str(e))
 
 
-@app.post("/api/replies/{gmail_id}/dismiss", dependencies=protected)
+@app.post("/api/replies/{gmail_id}/dismiss", dependencies=owner_only)
 def reply_dismiss(gmail_id: str):
     try:
         return replies.dismiss(gmail_id)

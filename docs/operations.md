@@ -5,7 +5,8 @@
 | Var | Required | What |
 |---|---|---|
 | `DATABASE_URL` | ✅ | Neon connection string **for the `icp_lab` role** (not the owner). Format: `postgresql://icp_lab:<pw>@<host>/neondb?sslmode=require&channel_binding=require` |
-| `DASHBOARD_PASSWORD_HASH` | ✅ | Output of `python backend/hash_password.py` (PBKDF2-SHA256, 600k iterations). Accepts a **comma-separated list** — any listed hash grants access; remove one to revoke that password |
+| `DASHBOARD_PASSWORD_HASH` | ✅ | **Owner** password hash — output of `python backend/hash_password.py` (PBKDF2-SHA256, 600k iterations). Accepts a comma-separated list; remove a hash to revoke that password |
+| `GUEST_PASSWORD_HASH` | optional | **Guest** password hash(es), same format. Guest sessions get everything except the Gmail-backed reply scanner (endpoints 403; the Replies card hides itself). Unset → no guest access |
 | `SESSION_SECRET` | ✅ | Long random string signing session cookies: `python -c "import secrets; print(secrets.token_hex(32))"` — use a *different* value in prod so local and prod sessions are independent |
 | `ANTHROPIC_API_KEY` | for Prospect | Claude API key (JD parsing, Haiku 4.5 — pennies per search) |
 | `APOLLO_API_KEY` | for Prospect | Apollo.io API key (people search free; reveal 1 credit/person) |

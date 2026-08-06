@@ -16,10 +16,12 @@ docs (`/docs`, `/openapi.json`) are deliberately disabled.
 ## Auth
 
 ### `POST /api/login`
-Body `{"password": "..."}`. On success sets the `icp_session` cookie
-(HTTP-only, SameSite=Lax, Secure unless `DEV_MODE`, 30 days) and returns
-`{"ok": true}`. Wrong password → 401. After 10 consecutive failures → 429
-for 15 minutes.
+Body `{"password": "..."}`. The password decides the role: a
+`DASHBOARD_PASSWORD_HASH` match → `owner`, a `GUEST_PASSWORD_HASH` match →
+`guest`. On success sets the role-carrying `icp_session` cookie (HTTP-only,
+SameSite=Lax, Secure unless `DEV_MODE`, 30 days) and returns
+`{"ok": true, "role": "owner"|"guest"}`. Wrong password → 401. After 10
+consecutive failures (shared counter) → 429 for 15 minutes.
 
 ### `POST /api/logout`
 Clears the cookie.
@@ -132,6 +134,8 @@ re-computed `score`, exact-name `known` match, `"revealed": true`.
 
 All hidden (404-free, but empty/`configured: false`) until the Gmail env
 vars are set — see [operations.md](operations.md#reply-scanner-setup).
+**Owner-only**: guest sessions get `configured: false` from `GET
+/api/replies` (hiding the card) and 403 from scan/confirm/dismiss.
 
 ### `GET /api/replies`
 State for the Replies card on the Contacts tab:
