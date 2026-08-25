@@ -16,9 +16,15 @@
     <button data-tab="icp">ICP finder</button>
     <button data-tab="enrich">Enrich</button>
     <button data-tab="prospect">Prospect</button>
+    <button data-tab="work">Work</button>
     <button data-tab="contacts">Contacts</button>
   </nav>
   <div class="spacer"></div>
+  <div class="seg" id="scope-toggle" title="Which outreach world the stats, breakdowns, ICP finder and contacts show.">
+    <button data-scope="work">Work</button>
+    <button data-scope="job">Job search</button>
+    <button data-scope="all">All</button>
+  </div>
   <button class="logout" id="logout">Log out</button>
 </header>
 
@@ -59,7 +65,7 @@
         <div class="seg" id="dim-picker"></div>
       </div>
       <div class="sub">Every group shows its sample size — a great rate on n=3 is noise, not signal.</div>
-      <div class="legend">
+      <div class="legend" id="breakdown-legend">
         <span class="key"><span class="swatch" style="background:var(--series-1)"></span>Response rate</span>
         <span class="key"><span class="swatch" style="background:var(--series-2)"></span>Click rate</span>
       </div>
@@ -122,6 +128,38 @@
       </div>
     </div>
     <div id="jd-results"></div>
+  </section>
+
+  <section id="tab-work" hidden>
+    <div class="card">
+      <h2>Find people by persona</h2>
+      <div class="sub">Describe who you're looking for. Claude expands it into LinkedIn title strings, Apollo searches US/Canada (editable), and companies on your exclusion list are filtered out before anything costs a credit. Search is free; Reveal costs 1 credit per person.</div>
+      <div class="work-form">
+        <label class="work-field wide">Persona
+          <input id="work-persona" placeholder="e.g. commercial insurance broker"></label>
+        <label class="work-field wide">Locations (comma-separated)
+          <input id="work-locations" placeholder="United States, Canada"></label>
+        <label class="work-field wide">Excluded companies (comma-separated — current clients etc.)
+          <input id="work-exclusions" placeholder="e.g. Acme Insurance, USI"></label>
+        <div class="enrich-actions">
+          <button class="save" id="work-go">Find people</button>
+          <label class="jd-opt">Per page
+            <input type="number" id="work-per-page" value="25" min="1" max="50"></label>
+          <span class="hint" id="work-status"></span>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Message template</h2>
+      <div class="sub">Copied (with placeholders filled) when you click a person. Placeholders: <code>{first_name}</code>, <code>{company}</code>, <code>{title}</code>. No tracking link on work messages.</div>
+      <textarea id="work-template" rows="7"></textarea>
+      <div class="enrich-actions" style="margin-top:10px">
+        <button class="save" id="work-save-settings">Save settings</button>
+        <span class="hint" id="work-template-len"></span>
+        <span class="hint" id="work-settings-status"></span>
+      </div>
+    </div>
+    <div id="work-results"></div>
   </section>
 
   <section id="tab-contacts" hidden>

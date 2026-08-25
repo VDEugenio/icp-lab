@@ -153,8 +153,15 @@ def _size_bucket(size):
     return "5000+"
 
 
-def load_segment_stats() -> dict:
-    """Click-rate stats per segment, computed from the contacts DB."""
+def load_segment_stats(scope: str = "all") -> dict:
+    """Click-rate stats per segment, computed from the contacts DB. scope is
+    a queries.SCOPES key — pass "work" when there's finally enough work-row
+    history to train Work-tab scoring on (currently unused: scoring is off
+    for work, and the job-search flow deliberately trains on everything)."""
+    import queries
+
+    where = queries.SCOPES[scope]
+
     def rates(expr):
         rows = db.query_all(
             f"""
@@ -162,14 +169,16 @@ def load_segment_stats() -> dict:
                    count(*) FILTER (WHERE v.uid IS NOT NULL) AS clicked
             FROM contacts c
             LEFT JOIN (SELECT DISTINCT uid FROM visits WHERE kind = 'human') v ON v.uid = c.uid
+            WHERE {where}
             GROUP BY 1
             """
         )
         return {r["grp"]: (r["clicked"], r["n"]) for r in rows}
 
     overall = db.query_one(
-        """SELECT count(*) AS n, count(*) FILTER (WHERE v.uid IS NOT NULL) AS clicked
-           FROM contacts c LEFT JOIN (SELECT DISTINCT uid FROM visits WHERE kind = 'human') v ON v.uid = c.uid"""
+        f"""SELECT count(*) AS n, count(*) FILTER (WHERE v.uid IS NOT NULL) AS clicked
+           FROM contacts c LEFT JOIN (SELECT DISTINCT uid FROM visits WHERE kind = 'human') v ON v.uid = c.uid
+           WHERE {where}"""
     )
     size_case = (
         "CASE WHEN c.company_size IS NULL THEN 'Unknown'"

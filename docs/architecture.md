@@ -154,6 +154,34 @@ No DELETE grant — events are only ever re-statused. Writes to `contacts`
 still go exclusively through `queries.update_contact()`; `replies.py` only
 writes its own table plus that one call path.
 
+### The purpose column + app_settings table (Work tab, added 2026-08)
+
+`contacts.purpose` separates the two outreach worlds: NULL = job search
+(all pre-existing rows), `'work'` = work outreach from the Work tab. The
+column itself is created by outreach-backend's `init_db()` migration; the
+value is set by `POST /contacts` (set-if-unset) and re-taggable from the
+Contacts tab via the normal PATCH path.
+
+`app_settings` is icp-lab's second owned table (same pattern as
+`reply_events`): a JSONB key/value store holding the Work tab's message
+template, persona, locations and client-exclusion list. One-time owner SQL
+(already run):
+
+```sql
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS purpose TEXT;
+GRANT UPDATE (purpose) ON contacts TO icp_lab;
+CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+GRANT SELECT, INSERT, UPDATE ON app_settings TO icp_lab;
+```
+
+Work rows have no tracking links (deliberate — no vaughneugenio.com links
+in messages sent on the employer's behalf), so under the `work` scope the
+frontend hides every click metric instead of showing a permanent 0%.
+
 ## Connection pooling
 
 `backend/db.py` wraps a `ThreadedConnectionPool(1, 8)` with two fixes learned

@@ -82,6 +82,12 @@ protected = [Depends(auth.require_auth)]
 owner_only = [Depends(auth.require_owner)]  # Gmail-backed reply scanner
 
 
+def _scope(scope: str) -> str:
+    if scope not in queries.SCOPES:
+        raise HTTPException(400, f"scope must be one of {sorted(queries.SCOPES)}")
+    return scope
+
+
 def _rate(n, d):
     return round(n / d, 4) if d else None
 
@@ -94,8 +100,8 @@ def _with_rates(row):
 
 
 @app.get("/api/stats", dependencies=protected)
-def stats():
-    data = queries.headline_stats()
+def stats(scope: str = "all"):
+    data = queries.headline_stats(_scope(scope))
     return {
         "overall": _with_rates(data["overall"]),
         "by_channel": [_with_rates(r) for r in data["by_channel"]],
@@ -103,24 +109,24 @@ def stats():
 
 
 @app.get("/api/breakdown", dependencies=protected)
-def breakdown(dim: str):
+def breakdown(dim: str, scope: str = "all"):
     if dim not in queries.DIMENSIONS:
         raise HTTPException(400, f"Unknown dimension. One of: {sorted(queries.DIMENSIONS)}")
-    return {"dim": dim, "groups": [_with_rates(r) for r in queries.breakdown(dim)]}
+    return {"dim": dim, "groups": [_with_rates(r) for r in queries.breakdown(dim, _scope(scope))]}
 
 
 @app.get("/api/timeseries", dependencies=protected)
-def timeseries(granularity: str = "week"):
+def timeseries(granularity: str = "week", scope: str = "all"):
     if granularity not in ("week", "month"):
         raise HTTPException(400, "granularity must be 'week' or 'month'")
     return {
         "granularity": granularity,
-        "periods": [_with_rates(r) for r in queries.timeseries(granularity)],
+        "periods": [_with_rates(r) for r in queries.timeseries(granularity, _scope(scope))],
     }
 
 
 @app.get("/api/icp", dependencies=protected)
-def icp(dims: str, min_n: int = 8, metric: str = "click"):
+def icp(dims: str, min_n: int = 8, metric: str = "click", scope: str = "all"):
     dim_list = list(dict.fromkeys(d for d in dims.split(",") if d))  # dedupe, keep order
     bad = [d for d in dim_list if d not in queries.DIMENSIONS]
     if not dim_list or bad:
@@ -128,7 +134,7 @@ def icp(dims: str, min_n: int = 8, metric: str = "click"):
     if metric not in ("click", "response"):
         raise HTTPException(400, "metric must be 'click' or 'response'")
     min_n = max(1, min(min_n, 10000))
-    rows = queries.icp(dim_list, min_n, metric)
+    rows = queries.icp(dim_list, min_n, metric, _scope(scope))
     return {
         "dims": dim_list,
         "min_n": min_n,
@@ -138,8 +144,8 @@ def icp(dims: str, min_n: int = 8, metric: str = "click"):
 
 
 @app.get("/api/contacts", dependencies=protected)
-def contacts():
-    return {"contacts": queries.list_contacts()}
+def contacts(scope: str = "all"):
+    return {"contacts": queries.list_contacts(_scope(scope))}
 
 
 @app.get("/api/enrich-meta", dependencies=protected)
@@ -172,6 +178,81 @@ async def prospect_reveal(body: RevealBody):
     import jd_finder
 
     return await jd_finder.reveal_person(body.id)
+
+
+# ---------- work tab (persona → Apollo people search, no company scope) ----------
+
+# Defaults returned until the user saves their own settings (and whenever the
+# app_settings table hasn't been created yet — see docs/architecture.md).
+WORK_DEFAULTS = {
+    "persona": "",
+    "locations": ["United States", "Canada"],
+    "exclusions": [],
+    "template": (
+        "Hi {first_name}!\n\n"
+        "I'm curious what a broker's day-to-day actually looks like, especially "
+        "around comparing quotes. I'm building a tool in this space and would "
+        "love insight into your workflow. Any chance you'd have time for a "
+        "quick call this week?\n\n"
+        "Thanks,\nVaughn"
+    ),
+}
+
+
+@app.get("/api/work-settings", dependencies=protected)
+def work_settings():
+    stored = queries.get_setting("work") or {}
+    return {
+        **WORK_DEFAULTS,
+        **{k: v for k, v in stored.items() if k in WORK_DEFAULTS},
+        "table_ready": queries.settings_table_ready(),
+    }
+
+
+class WorkSettingsBody(BaseModel):
+    persona: str = ""
+    locations: list[str] = []
+    exclusions: list[str] = []
+    template: str = ""
+
+
+@app.put("/api/work-settings", dependencies=protected)
+def save_work_settings(body: WorkSettingsBody):
+    if not queries.settings_table_ready():
+        raise HTTPException(503, "app_settings table missing — run the one-time SQL in docs/architecture.md")
+    value = {
+        "persona": body.persona.strip(),
+        "locations": [l.strip() for l in body.locations if l.strip()],
+        "exclusions": [e.strip() for e in body.exclusions if e.strip()],
+        "template": body.template,
+    }
+    queries.set_setting("work", value)
+    return {"ok": True, **value}
+
+
+class WorkSearchBody(BaseModel):
+    persona: str
+    locations: list[str] = []
+    exclusions: list[str] = []
+    per_page: int = 25
+    page: int = 1
+    titles: list[str] | None = None  # Load more passes the parsed titles back
+
+
+@app.post("/api/work-search", dependencies=protected)
+async def work_search(body: WorkSearchBody):
+    if not body.persona.strip() and not body.titles:
+        raise HTTPException(400, "persona is empty")
+    import work_finder
+
+    return await work_finder.search(
+        body.persona,
+        [l.strip() for l in body.locations if l.strip()],
+        body.exclusions,
+        per_page=max(1, min(work_finder.MAX_PER_PAGE, body.per_page)),
+        page=max(1, min(500, body.page)),
+        titles=body.titles or None,
+    )
 
 
 # ---------- reply scanner (Gmail LinkedIn notifications → responded) ----------
@@ -242,6 +323,7 @@ class OutreachContactBody(BaseModel):
     linkedin_url: str | None = None
     target_role: str | None = None
     target_company: str | None = None
+    purpose: str | None = None  # 'work' from the Work tab; omitted = job search
 
 
 @app.post("/api/outreach-contact", dependencies=protected)
@@ -302,11 +384,13 @@ class ContactUpdate(BaseModel):
     target_company: str | None = None
     channel: str | None = None
     contacted_at: datetime | None = None
+    purpose: str | None = None  # null = job search, 'work' = work outreach
 
 
 ENRICH_ENUMS = {
     "connection_degree": {"1st", "2nd", "3rd"},
     "channel": {"copy", "email"},
+    "purpose": {"work"},
 }
 
 

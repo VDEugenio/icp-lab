@@ -392,3 +392,23 @@ td input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accen
   background: var(--accent); color: #fff; border: 0; border-radius: 7px; cursor: pointer;
 }
 .login-card .err { color: var(--danger); font-size: 13px; margin-top: 10px; min-height: 18px; }
+
+/* ---------- work tab + scope toggle ---------- */
+.topbar .seg { margin-right: 10px; }
+.work-form { display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
+.work-field { display: flex; flex-direction: column; gap: 4px; color: var(--ink-2); font-size: 12.5px; }
+.work-field input {
+  font: inherit; font-size: 13px; color: var(--ink);
+  background: var(--page); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px;
+}
+#work-template {
+  width: 100%; font: inherit; font-size: 13px; color: var(--ink);
+  background: var(--page); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; resize: vertical;
+}
+.work-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 8px 16px; margin-top: 12px; }
+.work-list .prospect-card { margin-bottom: 0; }
+.work-search-link { color: var(--ink-2); font-size: 12px; text-decoration: none; border-bottom: 1px dashed var(--baseline); }
+.work-search-link:hover { color: var(--ink); }
+.seg[hidden], .legend[hidden] { display: none; }

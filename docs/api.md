@@ -28,6 +28,12 @@ Clears the cookie.
 
 ## Analytics (read-only)
 
+All five analytics/contacts endpoints accept `?scope=all|job|work`
+(default `all`; anything else → 400). `job` = rows where `purpose` is NULL
+or ≠ `'work'` (all history predates the column), `work` = `purpose =
+'work'` rows created from the Work tab. The frontend threads the topbar
+scope toggle through every call.
+
 ### `GET /api/stats`
 ```json
 {
@@ -57,8 +63,9 @@ by the chosen metric, returns top 50. Response groups carry one key per
 requested dimension plus the count/rate fields.
 
 ### `GET /api/contacts`
-`{"contacts": [...]}` — every row with display fields, `visit_count`, and
-`last_visit`. Ordered by `contacted_at` desc (nulls last).
+`{"contacts": [...]}` — every row in scope with display fields (including
+`purpose`), `visit_count`, and `last_visit`. Ordered by `contacted_at`
+desc (nulls last).
 
 ### `GET /api/enrich-meta`
 Suggestion data for the Enrich tab:
@@ -94,6 +101,31 @@ Partial update; send only the fields to change. Accepted fields:
 
 Returns `{"contact": {...updated row...}}`. 404 for unknown uid, 400 for
 invalid enum values, 422 for type errors.
+
+## Work tab
+
+### `GET /api/work-settings`
+Persisted Work-tab settings merged over defaults: `{"persona", "locations",
+"exclusions", "template", "table_ready"}`. `table_ready: false` means the
+one-time `app_settings` SQL hasn't been run — the tab still works, settings
+just don't persist.
+
+### `PUT /api/work-settings`
+Body: same four fields. Stored as one JSONB row (`key = 'work'`) in
+`app_settings`. 503 if the table is missing.
+
+### `POST /api/work-search`
+Body: `{"persona": "commercial insurance broker", "locations": ["United
+States", "Canada"], "exclusions": ["..."], "per_page": 25, "page": 1,
+"titles": null}`. Claude expands the persona into LinkedIn title strings
+(forced tool call, same pattern as jd-search), then one page of Apollo
+`mixed_people/api_search` — company-less, so no credits. Companies matching
+an exclusion term (case-insensitive substring on the unobfuscated org name)
+are dropped before display. Load more passes the returned `titles` back to
+skip the re-parse. Returns `{"titles", "total_entries", "page", "per_page",
+"excluded_count", "people": [{id, name, title, company_name, linkedin_url
+(null pre-reveal), linkedin_search_url, country, seniority, known}]}`.
+Reveal reuses `POST /api/prospect-reveal`.
 
 ## Prospect tab
 
@@ -185,7 +217,9 @@ browser can't call outreach-backend cross-origin).
 
 ### `POST /api/outreach-contact`
 Body: `{"first_name": "...", "last_name": ..., "linkedin_url": ...,
-"target_role": ..., "target_company": ...}` (all but first_name optional).
+"target_role": ..., "target_company": ..., "purpose": ...}` (all but
+first_name optional; the Work tab sends `purpose: "work"`, which
+outreach-backend applies set-if-unset so re-copies never reclassify).
 Forwards to `POST {OUTREACH_BACKEND_URL}/contacts` — which **upserts,
 deduping by `linkedin_url`** — and returns `{"uid": "vc9",
 "tracking_url": "https://vaughneugenio.com/r/vc9"}`.

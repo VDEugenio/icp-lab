@@ -15,6 +15,13 @@
   bucket rather than disappearing.
 - **Low n** — groups under n=8 get a "low n" badge and muted styling in
   Breakdowns; the ICP finder excludes them entirely (threshold adjustable).
+- **Scope** — the topbar toggle (Work / Job search / All, default Work,
+  persisted in localStorage) selects which outreach world every analytics
+  view and the Contacts tab show. `purpose IS NULL` = job search (all
+  history), `purpose = 'work'` = Work-tab rows. Work messages carry no
+  tracking link, so the work scope hides all click metrics (KPI tiles,
+  funnel stage, table columns, the ICP click-rate ranking) rather than
+  showing a permanent 0%.
 
 Data caveats inherited from the pipeline: old rows are sparse (columns were
 added over time), `contacted_at` is overwritten if a message is re-copied for
@@ -60,6 +67,36 @@ Manual data entry for what Apollo couldn't provide.
   later contacts from it.
 - **Dropdowns with a Custom escape hatch** for seniority and country;
   type-ahead suggestions for title (344 distinct values) and industry.
+
+## Work tab (persona → people, added 2026-08)
+
+The work-outreach counterpart of the Prospect tab: no job description, no
+company scope, no fit scoring. Used to find e.g. commercial insurance
+brokers to message for Vaughn's job (not job search).
+
+1. **Settings** (persisted in `app_settings`, editable in the tab):
+   persona text, locations (default United States + Canada), excluded
+   companies (current clients — case-insensitive substring match against
+   the org name, applied **before** any credit is spent, since the free
+   search returns org names unobfuscated), and the message template.
+2. **Expand** — Claude (`claude-haiku-4-5`, forced tool call) turns the
+   persona into 4–8 LinkedIn title strings, shown as pills above results.
+3. **Search** — one company-less Apollo `mixed_people/api_search` page
+   (free). Load more pages through the same parsed titles without
+   re-asking Claude. Known contacts are flagged like the Prospect tab.
+4. **Reveal** (1 credit, same `people/match` endpoint) — or the free
+   "Search ↗" fallback: a LinkedIn people search for name + title +
+   company, useful when the Apollo subscription is paused.
+5. **Copy msg + LinkedIn** — fills the template's `{first_name}`,
+   `{company}`, `{title}` placeholders (no tracking link on work
+   messages), copies it, opens the profile, creates the contact via
+   outreach-backend with `purpose: "work"`, enriches the fresh row with
+   title/company/country/seniority from the search data, and stamps
+   `contacted_at`.
+
+Fit scoring is deliberately off for work rows until enough work history
+exists to train on: the scoring helpers already accept a scope, so turning
+it on later is a small change (`work_finder.py` has the pointer).
 
 ## Prospect tab (JD → scored people)
 

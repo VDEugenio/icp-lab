@@ -41,6 +41,14 @@ To verify grants behave: reads succeed, granted-column updates succeed,
 `linkedin_url`/`uid`/`apollo_raw` updates and any INSERT/DELETE are denied
 with `InsufficientPrivilege`.
 
+## Work tab storage (one-time, already done)
+
+`contacts.purpose` (created by outreach-backend's migration) plus the
+`app_settings` table and its grants — the SQL block lives in
+docs/architecture.md. Both were applied to Neon in Aug 2026; a missing
+`app_settings` table degrades gracefully (`table_ready: false`, settings
+just don't persist).
+
 ## Reply scanner setup
 
 Two one-time steps, then the Replies card appears on the Contacts tab.

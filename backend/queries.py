@@ -55,6 +55,14 @@ DIMENSIONS = {
 
 OUTCOMES = {"call", "referral", "ghost", "rejected", "other"}
 
+# Scope: which world a query looks at. NULL purpose = job-search rows (all
+# history predates the column); 'work' = work-outreach rows from the Work tab.
+SCOPES = {
+    "all": "TRUE",
+    "job": "c.purpose IS DISTINCT FROM 'work'",
+    "work": "c.purpose = 'work'",
+}
+
 # Columns the icp_lab DB role may UPDATE for manual enrichment (matches the
 # column-level grants; uid/created_at/apollo_raw/linkedin_url are excluded
 # both here and at the DB level).
@@ -63,14 +71,15 @@ ENRICH_COLUMNS = {
     "company_name", "company_size", "company_industry",
     "city", "state", "country", "years_at_company", "email_status",
     "premium", "follower_count", "connection_degree",
-    "target_role", "target_company", "channel", "contacted_at",
+    "target_role", "target_company", "channel", "contacted_at", "purpose",
 }
 
 _RETURN_COLS = (
     "uid, responded, responded_at, outcome, first_name, last_name, title, "
     "seniority, departments, company_name, company_size, company_industry, "
     "city, state, country, years_at_company, premium, follower_count, "
-    "connection_degree, target_role, target_company, channel, contacted_at"
+    "connection_degree, target_role, target_company, channel, contacted_at, "
+    "purpose"
 )
 
 _COUNTS = """
@@ -80,45 +89,49 @@ _COUNTS = """
 """
 
 
-def headline_stats():
-    overall = db.query_one(f"SELECT {_COUNTS} FROM contacts c {_VISITS_JOIN}")
+def headline_stats(scope: str = "all"):
+    where = SCOPES[scope]  # caller validates membership
+    overall = db.query_one(f"SELECT {_COUNTS} FROM contacts c {_VISITS_JOIN} WHERE {where}")
     by_channel = db.query_all(
         f"""
         SELECT {DIMENSIONS['channel']} AS channel, {_COUNTS}
         FROM contacts c {_VISITS_JOIN}
+        WHERE {where}
         GROUP BY 1 ORDER BY 2 DESC
         """
     )
     return {"overall": overall, "by_channel": by_channel}
 
 
-def breakdown(dim: str):
-    expr = DIMENSIONS[dim]  # caller validates membership
+def breakdown(dim: str, scope: str = "all"):
+    expr = DIMENSIONS[dim]  # caller validates membership (scope too)
     return db.query_all(
         f"""
         SELECT {expr} AS grp, {_COUNTS}
         FROM contacts c {_VISITS_JOIN}
+        WHERE {SCOPES[scope]}
         GROUP BY 1 ORDER BY contacted DESC, grp
         """
     )
 
 
-def timeseries(granularity: str):
+def timeseries(granularity: str, scope: str = "all"):
     assert granularity in ("week", "month")
     return db.query_all(
         f"""
         SELECT date_trunc(%s, c.contacted_at) AS period, {_COUNTS}
         FROM contacts c {_VISITS_JOIN}
-        WHERE c.contacted_at IS NOT NULL
+        WHERE c.contacted_at IS NOT NULL AND {SCOPES[scope]}
         GROUP BY 1 ORDER BY 1
         """,
         (granularity,),
     )
 
 
-def icp(dims: list, min_n: int, metric: str):
+def icp(dims: list, min_n: int, metric: str, scope: str = "all"):
     """Group by a combination of whitelisted dimensions, drop groups under
-    min_n, rank by click or response rate. dims/metric validated by caller."""
+    min_n, rank by click or response rate. dims/metric/scope validated by
+    caller."""
     exprs = [DIMENSIONS[d] for d in dims]
     select_cols = ", ".join(f"{e} AS {d}" for d, e in zip(dims, exprs))
     group_nums = ", ".join(str(i + 1) for i in range(len(dims)))
@@ -130,6 +143,7 @@ def icp(dims: list, min_n: int, metric: str):
         f"""
         SELECT {select_cols}, {_COUNTS}
         FROM contacts c {_VISITS_JOIN}
+        WHERE {SCOPES[scope]}
         GROUP BY {group_nums}
         HAVING count(*) >= %s
         ORDER BY {rate} DESC, count(*) DESC
@@ -139,7 +153,7 @@ def icp(dims: list, min_n: int, metric: str):
     )
 
 
-def list_contacts():
+def list_contacts(scope: str = "all"):
     return db.query_all(
         f"""
         SELECT c.uid, c.first_name, c.last_name, c.linkedin_url, c.title,
@@ -148,9 +162,10 @@ def list_contacts():
                c.country, c.years_at_company, c.target_role,
                c.target_company, c.channel, c.premium, c.follower_count,
                c.created_at, c.contacted_at, c.responded, c.responded_at,
-               c.outcome,
+               c.outcome, c.purpose,
                coalesce(v.visit_count, 0) AS visit_count, v.last_visit
         FROM contacts c {_VISITS_JOIN}
+        WHERE {SCOPES[scope]}
         ORDER BY c.contacted_at DESC NULLS LAST, c.created_at DESC NULLS LAST
         """
     )
@@ -211,3 +226,30 @@ def enrich_meta():
         "countries": distinct("country"),
         "titles": distinct("title"),
     }
+
+
+# ---------- app_settings (icp-lab-owned key/value store) ----------
+# One-time owner SQL creates the table (icp_lab can't CREATE TABLE) — see
+# docs/architecture.md. Used for the Work tab's message template + filters.
+
+def settings_table_ready() -> bool:
+    row = db.query_one("SELECT to_regclass('public.app_settings') AS t")
+    return bool(row and row["t"])
+
+
+def get_setting(key: str):
+    """Returns the stored JSON value, or None if unset or table missing."""
+    if not settings_table_ready():
+        return None
+    row = db.query_one("SELECT value FROM app_settings WHERE key = %s", (key,))
+    return row["value"] if row else None
+
+
+def set_setting(key: str, value) -> None:
+    from psycopg2.extras import Json
+
+    db.execute(
+        """INSERT INTO app_settings (key, value, updated_at) VALUES (%s, %s, now())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()""",
+        (key, Json(value)),
+    )

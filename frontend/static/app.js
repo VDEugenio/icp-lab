@@ -71,11 +71,36 @@ document.getElementById('logout').addEventListener('click', async () => {
   location.href = '/login';
 });
 
+// ---------- scope (work vs job search vs all) ----------
+// Threads through every analytics endpoint. Work rows have no tracking links,
+// so under the work scope all click metrics are hidden rather than shown as a
+// misleading permanent 0%.
+
+const SCOPE_KEY = 'icp_scope';
+let scope = localStorage.getItem(SCOPE_KEY);
+if (!['work', 'job', 'all'].includes(scope)) scope = 'work';
+const workScope = () => scope === 'work';
+
+const scopeToggle = document.getElementById('scope-toggle');
+function syncScopeButtons() {
+  scopeToggle.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.scope === scope));
+}
+syncScopeButtons();
+scopeToggle.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-scope]');
+  if (!btn || btn.dataset.scope === scope) return;
+  scope = btn.dataset.scope;
+  localStorage.setItem(SCOPE_KEY, scope);
+  syncScopeButtons();
+  refreshAnalytics();
+  loadContacts();
+});
+
 // ---------- overview ----------
 
 async function loadStats() {
   try {
-    const data = await api('/api/stats');
+    const data = await api(`/api/stats?scope=${scope}`);
     renderKpis(data.overall);
     renderFunnel(data.overall);
     renderChannelTable(data.by_channel);
@@ -85,16 +110,22 @@ async function loadStats() {
 }
 
 function renderKpis(o) {
-  document.getElementById('kpis').innerHTML = `
-    <div class="tile"><div class="label">Contacts</div><div class="value">${num(o.contacted)}</div><div class="hint">all rows</div></div>
-    <div class="tile"><div class="label">Clicked link</div><div class="value">${pct(o.click_rate)}</div><div class="hint">${num(o.clicked)} contacts</div></div>
-    <div class="tile"><div class="label">Responded</div><div class="value">${pct(o.response_rate)}</div><div class="hint">${num(o.responded)} contacts</div></div>
+  // work messages carry no tracking link — click tiles would always read 0%
+  const clickTiles = workScope() ? '' : `
+    <div class="tile"><div class="label">Clicked link</div><div class="value">${pct(o.click_rate)}</div><div class="hint">${num(o.clicked)} contacts</div></div>`;
+  const clickConv = workScope() ? '' : `
     <div class="tile"><div class="label">Clicked → responded</div><div class="value">${o.clicked ? pct(o.responded / o.clicked) : '—'}</div><div class="hint">of those who clicked</div></div>`;
+  document.getElementById('kpis').innerHTML = `
+    <div class="tile"><div class="label">Contacts</div><div class="value">${num(o.contacted)}</div><div class="hint">all rows</div></div>${clickTiles}
+    <div class="tile"><div class="label">Responded</div><div class="value">${pct(o.response_rate)}</div><div class="hint">${num(o.responded)} contacts</div></div>${clickConv}`;
 }
 
 function renderFunnel(o) {
   // per-bar label ink: dark text on the light funnel step, white on the darker two
-  const stages = [
+  const stages = workScope() ? [
+    ['Contacted', o.contacted, 'var(--funnel-1)', '#0b0b0b'],
+    ['Responded', o.responded, 'var(--funnel-3)', '#ffffff'],
+  ] : [
     ['Contacted', o.contacted, 'var(--funnel-1)', '#0b0b0b'],
     ['Clicked', o.clicked, 'var(--funnel-2)', '#ffffff'],
     ['Responded', o.responded, 'var(--funnel-3)', '#ffffff'],
@@ -123,15 +154,16 @@ function renderFunnel(o) {
 
 function renderChannelTable(rows) {
   const label = { copy: 'LinkedIn DM', email: 'Email' };
+  const clickCols = !workScope();
   document.getElementById('channel-table').innerHTML = `<table><thead><tr>
-      <th>Channel</th><th class="num">Contacted</th><th class="num">Clicked</th>
-      <th class="num">Click rate</th><th class="num">Responded</th><th class="num">Response rate</th>
+      <th>Channel</th><th class="num">Contacted</th>${clickCols ? `<th class="num">Clicked</th>
+      <th class="num">Click rate</th>` : ''}<th class="num">Responded</th><th class="num">Response rate</th>
     </tr></thead><tbody>` +
     rows.map((r) => `<tr>
       <td>${esc(label[r.channel] || r.channel)}</td>
       <td class="num">${num(r.contacted)}</td>
-      <td class="num">${num(r.clicked)}</td>
-      <td class="num">${pct(r.click_rate)}</td>
+      ${clickCols ? `<td class="num">${num(r.clicked)}</td>
+      <td class="num">${pct(r.click_rate)}</td>` : ''}
       <td class="num">${num(r.responded)}</td>
       <td class="num"><b>${pct(r.response_rate)}</b></td>
     </tr>`).join('') + '</tbody></table>';
@@ -159,7 +191,7 @@ function periodLabel(iso, granularity) {
 async function loadTimeseries() {
   const host = document.getElementById('timeseries');
   try {
-    const data = await api(`/api/timeseries?granularity=${currentGranularity}`);
+    const data = await api(`/api/timeseries?granularity=${currentGranularity}&scope=${scope}`);
     renderTimeseries(host, data.periods, data.granularity);
   } catch (err) {
     host.innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
@@ -238,7 +270,7 @@ function renderTimeseries(host, periods, granularity) {
     dot.hidden = false;
     showTooltip(ttRows(periodLabel(p.period, granularity), [
       ['Contacted', num(p.contacted)],
-      ['Clicked', `${num(p.clicked)} (${pct(p.click_rate)})`],
+      ...(workScope() ? [] : [['Clicked', `${num(p.clicked)} (${pct(p.click_rate)})`]]),
       ['Responded', `${num(p.responded)} (${pct(p.response_rate)})`],
     ]), e.clientX, e.clientY);
   });
@@ -277,7 +309,7 @@ async function loadBreakdown() {
   const host = document.getElementById('breakdown-table');
   host.innerHTML = '<div class="loading">Loading…</div>';
   try {
-    const data = await api(`/api/breakdown?dim=${currentDim}`);
+    const data = await api(`/api/breakdown?dim=${currentDim}&scope=${scope}`);
     let groups = data.groups;
     if (currentDim === 'company_size') {
       groups = [...groups].sort((a, b) => SIZE_ORDER.indexOf(a.grp) - SIZE_ORDER.indexOf(b.grp));
@@ -289,13 +321,15 @@ async function loadBreakdown() {
 }
 
 function renderBreakdown(host, groups) {
+  const clickCols = !workScope();
+  document.getElementById('breakdown-legend').hidden = !clickCols;
   if (!groups.length) { host.innerHTML = '<div class="loading">No data.</div>'; return; }
   // one shared scale for both bars, so lengths are comparable across the table
-  const scale = Math.max(0.05, ...groups.flatMap((g) => [g.response_rate || 0, g.click_rate || 0]));
+  const scale = Math.max(0.05, ...groups.flatMap((g) => [g.response_rate || 0, clickCols ? g.click_rate || 0 : 0]));
   host.innerHTML = `<table><thead><tr>
       <th>Group</th><th class="num">n</th>
-      <th class="bar-cell">Response rate</th><th class="bar-cell">Click rate</th>
-      <th class="num">Responded</th><th class="num">Clicked</th>
+      <th class="bar-cell">Response rate</th>${clickCols ? '<th class="bar-cell">Click rate</th>' : ''}
+      <th class="num">Responded</th>${clickCols ? '<th class="num">Clicked</th>' : ''}
     </tr></thead><tbody>` +
     groups.map((g) => {
       const lowN = g.contacted < LOW_N;
@@ -307,9 +341,9 @@ function renderBreakdown(host, groups) {
         <td>${esc(g.grp)}${lowN ? '<span class="badge">low n</span>' : ''}</td>
         <td class="num">${num(g.contacted)}</td>
         <td class="bar-cell">${bar(g.response_rate, 'resp')}</td>
-        <td class="bar-cell">${bar(g.click_rate, 'click')}</td>
+        ${clickCols ? `<td class="bar-cell">${bar(g.click_rate, 'click')}</td>` : ''}
         <td class="num">${num(g.responded)}</td>
-        <td class="num">${num(g.clicked)}</td>
+        ${clickCols ? `<td class="num">${num(g.clicked)}</td>` : ''}
       </tr>`;
     }).join('') + '</tbody></table>';
 }
@@ -348,9 +382,12 @@ async function loadIcp() {
     return;
   }
   const minN = Math.max(1, parseInt(document.getElementById('icp-min-n').value, 10) || 8);
+  // no tracking links on work rows: response rate is the only ranking metric
+  const metric = workScope() ? 'response' : icpMetric;
+  document.getElementById('icp-metric').hidden = workScope();
   host.innerHTML = '<div class="loading">Loading…</div>';
   try {
-    const data = await api(`/api/icp?dims=${dims.join(',')}&min_n=${minN}&metric=${icpMetric}`);
+    const data = await api(`/api/icp?dims=${dims.join(',')}&min_n=${minN}&metric=${metric}&scope=${scope}`);
     renderIcp(host, data);
   } catch (err) {
     host.innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
@@ -363,7 +400,8 @@ function renderIcp(host, data) {
     host.innerHTML = `<div class="loading">No combination of these dimensions reaches n ≥ ${min_n}. Lower the threshold or pick fewer dimensions.</div>`;
     return;
   }
-  const scale = Math.max(0.05, ...groups.flatMap((g) => [g.click_rate || 0, g.response_rate || 0]));
+  const clickCols = !workScope();
+  const scale = Math.max(0.05, ...groups.flatMap((g) => [clickCols ? g.click_rate || 0 : 0, g.response_rate || 0]));
   const bar = (rate, cls) => `<div class="rate-bar">
       <div class="track"><div class="fill ${cls}" style="width:${((rate || 0) / scale * 100).toFixed(1)}%"></div></div>
       <span class="pct">${pct(rate)}</span>
@@ -372,16 +410,16 @@ function renderIcp(host, data) {
       <th class="num">#</th>
       ${dims.map((d) => `<th>${esc(DIM_LABEL[d] || d)}</th>`).join('')}
       <th class="num">n</th>
-      <th class="bar-cell">Click rate</th><th class="bar-cell">Response rate</th>
-      <th class="num">Clicked</th><th class="num">Responded</th>
+      ${clickCols ? '<th class="bar-cell">Click rate</th>' : ''}<th class="bar-cell">Response rate</th>
+      ${clickCols ? '<th class="num">Clicked</th>' : ''}<th class="num">Responded</th>
     </tr></thead><tbody>` +
     groups.map((g, i) => `<tr>
       <td class="num rank">${i + 1}</td>
       ${dims.map((d) => `<td>${esc(g[d])}</td>`).join('')}
       <td class="num">${num(g.contacted)}</td>
-      <td class="bar-cell">${bar(g.click_rate, 'click')}</td>
+      ${clickCols ? `<td class="bar-cell">${bar(g.click_rate, 'click')}</td>` : ''}
       <td class="bar-cell">${bar(g.response_rate, 'resp')}</td>
-      <td class="num">${num(g.clicked)}</td>
+      ${clickCols ? `<td class="num">${num(g.clicked)}</td>` : ''}
       <td class="num">${num(g.responded)}</td>
     </tr>`).join('') + '</tbody></table>' +
     (groups.length === 50 ? '<div class="sub" style="margin-top:10px">Showing top 50 combinations.</div>' : '');
@@ -998,6 +1036,269 @@ function prospectCard(p) {
   return div;
 }
 
+// ---------- work tab (persona → Apollo people search) ----------
+
+const workGo = document.getElementById('work-go');
+const workStatus = document.getElementById('work-status');
+// current search: parsed titles are passed back on Load more to skip re-parsing
+let workSearchCtx = null; // { titles, page, perPage, total, shown, excluded }
+
+async function loadWorkSettings() {
+  try {
+    const s = await api('/api/work-settings');
+    document.getElementById('work-persona').value = s.persona || '';
+    document.getElementById('work-locations').value = (s.locations || []).join(', ');
+    document.getElementById('work-exclusions').value = (s.exclusions || []).join(', ');
+    document.getElementById('work-template').value = s.template || '';
+    if (!s.table_ready) {
+      document.getElementById('work-settings-status').textContent =
+        'app_settings table missing — settings will not persist (one-time SQL in docs/architecture.md).';
+    }
+    updateWorkTemplateLen();
+  } catch { /* defaults stay; the card still works for this session */ }
+}
+
+function workFormValues() {
+  const split = (id) => document.getElementById(id).value.split(',').map((s) => s.trim()).filter(Boolean);
+  return {
+    persona: document.getElementById('work-persona').value.trim(),
+    locations: split('work-locations'),
+    exclusions: split('work-exclusions'),
+    template: document.getElementById('work-template').value,
+  };
+}
+
+document.getElementById('work-save-settings').addEventListener('click', async () => {
+  const btn = document.getElementById('work-save-settings');
+  btn.disabled = true;
+  try {
+    await api('/api/work-settings', { method: 'PUT', body: JSON.stringify(workFormValues()) });
+    toast('Work settings saved');
+  } catch (err) {
+    toast(`Save failed: ${err.message}`, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function buildWorkMessage(p) {
+  const first = (p.name || '').split(' ')[0];
+  return document.getElementById('work-template').value
+    .replaceAll('{first_name}', first)
+    .replaceAll('{company}', p.company_name || '')
+    .replaceAll('{title}', p.title || '');
+}
+
+function updateWorkTemplateLen() {
+  const el = document.getElementById('work-template-len');
+  const len = document.getElementById('work-template').value
+    .replaceAll('{first_name}', 'Firstname').replaceAll('{company}', 'Some Company Inc')
+    .replaceAll('{title}', 'Commercial Insurance Broker').length;
+  el.textContent = `message ≈ ${len} chars${len > MESSAGE_LIMIT ? ' — over 300; LinkedIn connection notes get truncated' : ''}`;
+  el.style.color = len > MESSAGE_LIMIT ? 'var(--danger)' : 'var(--muted)';
+}
+document.getElementById('work-template').addEventListener('input', updateWorkTemplateLen);
+
+workGo.addEventListener('click', () => workSearch(false));
+
+async function workSearch(loadMore) {
+  const { persona, locations, exclusions } = workFormValues();
+  if (!persona) { toast('Describe the persona first', true); return; }
+  const perPage = Math.max(1, Math.min(50, parseInt(document.getElementById('work-per-page').value, 10) || 25));
+  const page = loadMore ? workSearchCtx.page + 1 : 1;
+  workGo.disabled = true;
+  workStatus.textContent = loadMore ? 'Loading more…' : 'Expanding persona with Claude, then searching Apollo…';
+  try {
+    const data = await api('/api/work-search', {
+      method: 'POST',
+      body: JSON.stringify({
+        persona, locations, exclusions, per_page: perPage, page,
+        titles: loadMore ? workSearchCtx.titles : null,
+      }),
+    });
+    if (!loadMore) {
+      workSearchCtx = { titles: data.titles, page: 1, perPage, total: data.total_entries, shown: 0, excluded: 0 };
+      renderWorkResultsShell(data);
+    }
+    workSearchCtx.page = page;
+    workSearchCtx.shown += data.people.length;
+    workSearchCtx.excluded += data.excluded_count;
+    appendWorkCards(data);
+    workStatus.textContent = '';
+  } catch (err) {
+    workStatus.textContent = '';
+    if (!loadMore) {
+      document.getElementById('work-results').innerHTML =
+        `<div class="card"><div class="error-box">${esc(err.message)}</div></div>`;
+    } else {
+      toast(`Load more failed: ${err.message}`, true);
+    }
+  } finally {
+    workGo.disabled = false;
+  }
+}
+
+function renderWorkResultsShell(data) {
+  const host = document.getElementById('work-results');
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="parsed-bar">
+      ${data.titles.map((t) => `<span class="pill">${esc(t)}</span>`).join('')}
+      <span class="pill"><b>${num(data.total_entries)}</b> matches</span>
+      <span class="hint" id="work-results-note"></span>
+    </div>
+    <div class="sub">Apollo's free search masks last names and hides profile URLs — Reveal (1 credit) gets the real profile. "Search ↗" is the free fallback: a LinkedIn people search for the name + title + company. Clicking a revealed card copies your message and stamps the contact.</div>
+    <div class="work-list" id="work-list"></div>
+    <div class="enrich-actions" id="work-more-wrap" style="margin-top:10px"></div>`;
+  host.replaceChildren(card);
+}
+
+function appendWorkCards(data) {
+  const list = document.getElementById('work-list');
+  if (!list) return;
+  for (const p of data.people) list.appendChild(workCard(p));
+  const note = document.getElementById('work-results-note');
+  if (note) {
+    note.textContent = `showing ${workSearchCtx.shown}`
+      + (workSearchCtx.excluded ? ` · ${workSearchCtx.excluded} excluded (client list)` : '');
+  }
+  const moreWrap = document.getElementById('work-more-wrap');
+  moreWrap.replaceChildren();
+  if (workSearchCtx.shown + workSearchCtx.excluded < (workSearchCtx.total || 0)) {
+    const btn = document.createElement('button');
+    btn.className = 'nav-btn';
+    btn.textContent = 'Load more';
+    btn.addEventListener('click', () => workSearch(true));
+    moreWrap.appendChild(btn);
+  }
+  if (!workSearchCtx.shown) {
+    list.innerHTML = '<div class="loading">No matches (after exclusions).</div>';
+  }
+}
+
+function workCard(p) {
+  const div = document.createElement('div');
+  div.className = 'prospect-card';
+  div.dataset.pid = p.id;
+
+  div.innerHTML = `
+    <div class="p-name">${esc(p.name)}</div>
+    <div class="p-title">${esc(p.title || '—')}${p.company_name ? ` · ${esc(p.company_name)}` : ''}${p.country ? ` · ${esc(p.country)}` : ''}</div>`;
+
+  const row = document.createElement('div');
+  row.className = 'p-row';
+
+  if (p.known) {
+    const chip = document.createElement('span');
+    chip.className = 'known-chip';
+    const prefix = p.known.fuzzy ? 'Likely in your DB' : 'In your DB';
+    chip.textContent = prefix + (p.known.responded ? ' · responded' : '');
+    chip.title = `${p.known.name} (${p.known.uid})${p.known.outcome ? ' · ' + p.known.outcome : ''}`;
+    row.appendChild(chip);
+  }
+
+  // free fallback while unrevealed (or if Apollo has no URL): LinkedIn search
+  if (!p.linkedin_url && p.linkedin_search_url) {
+    const a = document.createElement('a');
+    a.className = 'work-search-link';
+    a.href = p.linkedin_search_url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = 'Search ↗';
+    a.title = 'Free: LinkedIn people search for this name + title + company';
+    row.appendChild(a);
+  }
+
+  if (p.linkedin_url) {
+    const btn = document.createElement('a');
+    btn.className = 'p-linkedin';
+    btn.href = p.linkedin_url;
+    btn.textContent = 'Copy msg + LinkedIn ↗';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      copyWorkMessageAndOpen(p, div, btn);
+    });
+    row.appendChild(btn);
+  } else {
+    const btn = document.createElement('button');
+    btn.className = 'p-linkedin p-reveal';
+    btn.type = 'button';
+    btn.textContent = 'Reveal · 1 credit';
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Revealing…';
+      try {
+        const d = await api('/api/prospect-reveal', { method: 'POST', body: JSON.stringify({ id: p.id }) });
+        // keep company_name from the search card — reveal doesn't return it
+        Object.assign(p, { ...d, company_name: p.company_name, score: undefined });
+        div.replaceWith(workCard(p));
+        toast(d.linkedin_url ? 'Revealed' : 'Revealed, but Apollo has no LinkedIn URL for them', !d.linkedin_url);
+      } catch (err) {
+        toast(`Reveal failed: ${err.message}`, true);
+        btn.disabled = false;
+        btn.textContent = 'Reveal · 1 credit';
+      }
+    });
+    row.appendChild(btn);
+  }
+
+  div.appendChild(row);
+  return div;
+}
+
+async function copyWorkMessageAndOpen(p, cardDiv, btn) {
+  const parts = (p.name || '').split(' ');
+  const first = parts[0];
+  const rest = parts.slice(1).join(' ').replace(/\.$/, '');
+  btn.textContent = 'Working…';
+  try {
+    if (!p.outreach) {
+      p.outreach = await api('/api/outreach-contact', {
+        method: 'POST',
+        body: JSON.stringify({
+          first_name: first,
+          last_name: rest || null,
+          linkedin_url: p.linkedin_url,
+          purpose: 'work',
+        }),
+      });
+      // enrich the fresh row from what the search/reveal already told us,
+      // so work contacts don't land as a wall of Unknowns
+      const enrich = {};
+      if (p.title) enrich.title = p.title;
+      if (p.company_name) enrich.company_name = p.company_name;
+      if (p.country) enrich.country = p.country;
+      if (p.seniority && p.seniority !== 'Unknown') enrich.seniority = p.seniority;
+      if (Object.keys(enrich).length) {
+        api(`/api/contacts/${encodeURIComponent(p.outreach.uid)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(enrich),
+        }).catch(() => {});
+      }
+    }
+    const msg = buildWorkMessage(p);
+    if (msg.length > MESSAGE_LIMIT) {
+      if (!confirm(`Message is ${msg.length} chars (limit ${MESSAGE_LIMIT} for connection notes). Copy anyway?`)) {
+        btn.textContent = 'Copy msg + LinkedIn ↗';
+        return;
+      }
+    }
+    await navigator.clipboard.writeText(msg);
+    window.open(p.linkedin_url, '_blank', 'noopener,noreferrer,width=1250,height=950');
+    cardDiv.classList.add('visited');
+    btn.textContent = 'Copy msg + LinkedIn ↗';
+    toast(`Message copied (${msg.length} chars) · contact ${p.outreach.uid}`);
+    api('/api/outreach-contacted', {
+      method: 'POST',
+      body: JSON.stringify({ uid: p.outreach.uid }),
+    }).then(() => { loadContacts(); refreshAnalytics(); }).catch(() => toast('Contacted-stamp failed', true));
+  } catch (err) {
+    btn.textContent = 'Copy msg + LinkedIn ↗';
+    toast(`Failed: ${err.message}`, true);
+  }
+}
+
 // ---------- contacts ----------
 
 const OUTCOMES = ['call', 'referral', 'ghost', 'rejected', 'other'];
@@ -1008,7 +1309,7 @@ document.getElementById('contact-search').addEventListener('input', () => render
 async function loadContacts() {
   const host = document.getElementById('contacts-table');
   try {
-    const data = await api('/api/contacts');
+    const data = await api(`/api/contacts?scope=${scope}`);
     allContacts = data.contacts;
     renderContacts();
     renderEnrichList();
@@ -1034,7 +1335,8 @@ function renderContacts() {
   const table = document.createElement('table');
   table.innerHTML = `<thead><tr>
     <th>Name</th><th>Title</th><th>Company</th><th>Target</th><th>Channel</th>
-    <th>Contacted</th><th class="num">Visits</th>
+    <th>Purpose</th>
+    <th>Contacted</th>${workScope() ? '' : '<th class="num">Visits</th>'}
     <th>Responded</th><th>Responded at</th><th>Outcome</th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
@@ -1058,9 +1360,33 @@ function contactRow(c) {
     <td class="title-cell" title="${esc(c.title || '')}">${esc(c.title || '—')}</td>
     <td class="title-cell">${esc(c.company_name || '—')}</td>
     <td class="title-cell" title="${esc(target)}">${esc(target || '—')}</td>
-    <td><span class="chip">${esc(chLabel)}</span></td>
-    <td title="${esc(c.contacted_at || '')}">${dateStr(c.contacted_at)}</td>
-    <td class="num">${c.visit_count > 0 ? `<b>${num(c.visit_count)}</b>` : '0'}</td>`;
+    <td><span class="chip">${esc(chLabel)}</span></td>`;
+
+  // purpose select (null = job search, 'work' = work outreach)
+  const tdPurpose = document.createElement('td');
+  const psel = document.createElement('select');
+  for (const [v, label] of [['', 'job'], ['work', 'work']]) {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = label;
+    psel.appendChild(opt);
+  }
+  psel.value = c.purpose === 'work' ? 'work' : '';
+  psel.addEventListener('change', () => saveContact(tr, c, { purpose: psel.value || null }));
+  tdPurpose.appendChild(psel);
+  tr.appendChild(tdPurpose);
+
+  const tdContacted = document.createElement('td');
+  tdContacted.title = c.contacted_at || '';
+  tdContacted.textContent = dateStr(c.contacted_at);
+  tr.appendChild(tdContacted);
+
+  if (!workScope()) {
+    const tdVisits = document.createElement('td');
+    tdVisits.className = 'num';
+    tdVisits.innerHTML = c.visit_count > 0 ? `<b>${num(c.visit_count)}</b>` : '0';
+    tr.appendChild(tdVisits);
+  }
 
   // responded checkbox
   const tdResp = document.createElement('td');
@@ -1279,3 +1605,4 @@ loadBreakdown();
 loadIcp();
 loadEnrichMeta();
 loadContacts();
+loadWorkSettings();
