@@ -225,13 +225,13 @@ def _match(name: str, contacts: list) -> tuple:
     return exact, near[:MAX_CANDIDATES]
 
 
-def _mark_responded(uid: str, when: datetime) -> bool:
+def _mark_responded(uid: str, when: datetime, user_id: int) -> bool:
     """Flip responded on, stamping the email's date. Never restamps an
     already-responded contact. Returns whether anything was written."""
     current = queries.get_contact(uid)
     if current is None or current["responded"]:
         return False
-    queries.update_contact(uid, {"responded": True, "responded_at": when})
+    queries.update_contact(uid, {"responded": True, "responded_at": when}, user_id)
     return True
 
 
@@ -241,9 +241,10 @@ _scan_lock = threading.Lock()
 _last_auto_scan = 0.0
 
 
-def scan(days: int = 30, auto: bool = False) -> dict:
+def scan(user_id: int, days: int = 30, auto: bool = False) -> dict:
     """Process new LinkedIn message notifications. Idempotent: every Gmail
-    message id is recorded in reply_events exactly once."""
+    message id is recorded in reply_events exactly once. user_id (the admin
+    whose session triggered the scan) is stamped as updated_by."""
     global _last_auto_scan
     if not configured():
         raise ScanError("Gmail is not configured — see docs/operations.md")
@@ -280,7 +281,7 @@ def scan(days: int = 30, auto: bool = False) -> dict:
                 exact, near = _match(name, contacts)
                 if len(exact) == 1:
                     status, matched_uid, candidate_uids = "auto_applied", exact[0]["uid"], None
-                    _mark_responded(matched_uid, msg["received_at"])
+                    _mark_responded(matched_uid, msg["received_at"], user_id)
                     auto_applied.append({"sender_name": name, "uid": matched_uid})
                 elif exact or near:
                     status, matched_uid = "pending", None
@@ -310,7 +311,7 @@ def scan(days: int = 30, auto: bool = False) -> dict:
         ):
             exact, near = _match(r["sender_name"], contacts)
             if len(exact) == 1:
-                _mark_responded(exact[0]["uid"], r["received_at"])
+                _mark_responded(exact[0]["uid"], r["received_at"], user_id)
                 db.execute(
                     "UPDATE reply_events SET status = 'auto_applied',"
                     " matched_uid = %s WHERE gmail_id = %s",
@@ -409,7 +410,7 @@ def status() -> dict:
             "pending": pending, "recent_auto": recent_auto}
 
 
-def confirm(gmail_id: str, uid: str) -> dict:
+def confirm(gmail_id: str, uid: str, user_id: int) -> dict:
     ev = db.query_one(
         "SELECT gmail_id, received_at FROM reply_events"
         " WHERE gmail_id = %s AND status = 'pending'",
@@ -419,7 +420,7 @@ def confirm(gmail_id: str, uid: str) -> dict:
         raise LookupError("No such pending reply")
     if queries.get_contact(uid) is None:
         raise ValueError("No such contact")
-    applied = _mark_responded(uid, ev["received_at"] or datetime.now(timezone.utc))
+    applied = _mark_responded(uid, ev["received_at"] or datetime.now(timezone.utc), user_id)
     db.execute(
         "UPDATE reply_events SET status = 'confirmed', matched_uid = %s"
         " WHERE gmail_id = %s",

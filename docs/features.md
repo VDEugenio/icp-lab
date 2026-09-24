@@ -248,3 +248,21 @@ fields:
   "(legacy)" options.
 
 Search filters across name, company, title, target, and outcome.
+
+**Attribution columns**: *Added by* (who created the contact through the
+Prospect/Work tabs; "—" = Chrome extension or pre-multi-user) and *Last
+edited by* (hover for when). Every edit anywhere in icp-lab updates the
+latter.
+
+## Admin tab (admins only, added 2026-09)
+
+- **Users** — create an account (username + password, optional *can spend*),
+  toggle *can spend*, set a new password, disable/enable. Per-user counts of
+  contacts added and last edited. Everyone shares the same workspace; the
+  only per-user differences are *can spend*, admin-only features (this tab,
+  the Gmail reply scanner), and the Work tab's saved persona/template, which
+  is stored per user.
+- **Usage by user** — over 7/30/90 days or all time: Apollo credits
+  (exact — 1 per successful Reveal), reveals, Apollo searches (free), Claude
+  calls, input/output tokens and an estimated Claude cost at Haiku 4.5
+  list prices.

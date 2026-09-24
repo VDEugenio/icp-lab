@@ -18,6 +18,7 @@
     <button data-tab="prospect">Prospect</button>
     <button data-tab="work">Work</button>
     <button data-tab="contacts">Contacts</button>
+    <button data-tab="admin" id="admin-tab-btn" hidden>Admin</button>
   </nav>
   <div class="spacer"></div>
   <div class="seg" id="scope-toggle" title="Which outreach world the stats, breakdowns, ICP finder and contacts show.">
@@ -25,6 +26,7 @@
     <button data-scope="job">Job search</button>
     <button data-scope="all">All</button>
   </div>
+  <span class="whoami" id="whoami"></span>
   <button class="logout" id="logout">Log out</button>
 </header>
 
@@ -178,6 +180,34 @@
         <span class="count" id="contact-count"></span>
       </div>
       <div class="contacts-wrap" id="contacts-table"><div class="loading">Loading…</div></div>
+    </div>
+  </section>
+
+  <section id="tab-admin" hidden>
+    <div class="card">
+      <h2>Users</h2>
+      <div class="sub">Everyone shares the same contacts and analytics; every edit is stamped with who made it. Only admins see this tab and the Gmail reply scanner.</div>
+      <form class="admin-create" id="admin-create" autocomplete="off">
+        <input name="username" placeholder="username" required pattern="[a-z0-9._\-]{3,32}" title="3-32 chars: a-z, 0-9, dot, dash, underscore" autocapitalize="none" spellcheck="false">
+        <input name="password" type="password" placeholder="password (min 10)" required minlength="10" autocomplete="new-password">
+        <label><input name="can_spend" type="checkbox"> can spend (Claude + Apollo credits)</label>
+        <button type="submit" class="nav-btn">Create user</button>
+      </form>
+      <div class="contacts-wrap" id="admin-users"><div class="loading">Loading…</div></div>
+    </div>
+    <div class="card">
+      <div class="chart-head">
+        <h2 style="margin:0">Usage by user</h2>
+        <div class="spacer"></div>
+        <div class="seg" id="usage-range">
+          <button data-days="7">7d</button>
+          <button data-days="30" class="active">30d</button>
+          <button data-days="90">90d</button>
+          <button data-days="0">All</button>
+        </div>
+      </div>
+      <div class="sub">Apollo credits are exact (1 per Reveal). Claude cost is an estimate from token counts at Haiku 4.5 list prices.</div>
+      <div class="contacts-wrap" id="admin-usage"><div class="loading">Loading…</div></div>
     </div>
   </section>
 </main>

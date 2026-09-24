@@ -1338,6 +1338,7 @@ function renderContacts() {
     <th>Purpose</th>
     <th>Contacted</th>${workScope() ? '' : '<th class="num">Visits</th>'}
     <th>Responded</th><th>Responded at</th><th>Outcome</th>
+    <th>Added by</th><th>Last edited by</th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
   for (const c of rows) tbody.appendChild(contactRow(c));
@@ -1425,6 +1426,17 @@ function contactRow(c) {
   tdOut.appendChild(sel);
   tr.appendChild(tdOut);
 
+  // attribution (NULL = Chrome extension / pre-multi-user rows)
+  const tdAdded = document.createElement('td');
+  tdAdded.className = 'muted-cell';
+  tdAdded.textContent = c.created_by_name || '—';
+  tr.appendChild(tdAdded);
+  const tdEdited = document.createElement('td');
+  tdEdited.className = 'muted-cell';
+  tdEdited.textContent = c.updated_by_name || '—';
+  if (c.updated_at) tdEdited.title = new Date(c.updated_at).toLocaleString();
+  tr.appendChild(tdEdited);
+
   return tr;
 }
 
@@ -1435,7 +1447,7 @@ async function saveContact(tr, c, patch) {
       method: 'PATCH',
       body: JSON.stringify(patch),
     });
-    Object.assign(c, data.contact); // server truth: responded, responded_at, outcome
+    Object.assign(c, data.contact); // server truth: responded, responded_at, outcome, updated_by_name
     tr.replaceWith(contactRow(c));
     toast('Saved');
     refreshAnalytics();
@@ -1596,8 +1608,181 @@ function replyRow(ev) {
   return tr;
 }
 
+// ---------- admin (user accounts + per-user usage) ----------
+
+let me = null;
+
+async function loadMe() {
+  me = await api('/api/me');
+  document.getElementById('whoami').textContent = me.username;
+  if (me.is_admin) {
+    document.getElementById('admin-tab-btn').hidden = false;
+    loadAdminUsers();
+    loadAdminUsage();
+  }
+  if (!me.can_spend) {
+    // Claude + Apollo calls are gated server-side too (403); this just
+    // explains why the buttons are off.
+    const note = 'Searching and Reveal are off for your account — ask Vaughn to enable spending.';
+    for (const [btnId, statusId] of [['jd-go', 'jd-status'], ['work-go', 'work-status']]) {
+      document.getElementById(btnId).disabled = true;
+      document.getElementById(statusId).textContent = note;
+    }
+    const auto = document.getElementById('jd-autoreveal');
+    if (auto) auto.disabled = true;
+  }
+}
+
+async function loadAdminUsers() {
+  const host = document.getElementById('admin-users');
+  try {
+    const { users } = await api('/api/admin/users');
+    const table = document.createElement('table');
+    table.innerHTML = `<thead><tr>
+      <th>Username</th><th>Role</th><th>Can spend</th><th>Status</th>
+      <th class="num">Added</th><th class="num">Last edited</th>
+      <th>Created</th><th>Last login</th><th></th>
+    </tr></thead>`;
+    const tbody = document.createElement('tbody');
+    for (const u of users) tbody.appendChild(adminUserRow(u));
+    table.appendChild(tbody);
+    host.replaceChildren(table);
+  } catch (err) {
+    host.innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
+  }
+}
+
+function adminUserRow(u) {
+  const tr = document.createElement('tr');
+  const self = me && u.username === me.username;
+  tr.innerHTML = `
+    <td><b>${esc(u.username)}</b></td>
+    <td>${u.is_admin ? '<span class="chip">admin</span>' : 'user'}</td>`;
+
+  const tdSpend = document.createElement('td');
+  const spend = document.createElement('input');
+  spend.type = 'checkbox';
+  spend.checked = u.can_spend;
+  spend.title = 'Allow Claude searches and Apollo Reveal (credits)';
+  spend.addEventListener('change', () => adminPatch(u, { can_spend: spend.checked }));
+  tdSpend.appendChild(spend);
+  tr.appendChild(tdSpend);
+
+  const tdStatus = document.createElement('td');
+  tdStatus.textContent = u.disabled_at ? `disabled ${dateStr(u.disabled_at)}` : 'active';
+  tr.appendChild(tdStatus);
+
+  for (const n of [u.contacts_created, u.contacts_last_edited]) {
+    const td = document.createElement('td');
+    td.className = 'num';
+    td.textContent = num(n);
+    tr.appendChild(td);
+  }
+  for (const d of [u.created_at, u.last_login_at]) {
+    const td = document.createElement('td');
+    td.textContent = dateStr(d);
+    tr.appendChild(td);
+  }
+
+  const tdActions = document.createElement('td');
+  tdActions.className = 'admin-actions';
+  const reset = document.createElement('button');
+  reset.className = 'nav-btn';
+  reset.textContent = 'Set password';
+  reset.addEventListener('click', () => {
+    const pw = prompt(`New password for ${u.username} (min 10 characters):`);
+    if (pw) adminPatch(u, { password: pw }, 'Password updated');
+  });
+  tdActions.appendChild(reset);
+  if (!self) {
+    const toggle = document.createElement('button');
+    toggle.className = 'nav-btn';
+    toggle.textContent = u.disabled_at ? 'Enable' : 'Disable';
+    toggle.addEventListener('click', () => {
+      if (!u.disabled_at && !confirm(`Disable ${u.username}? They're signed out immediately.`)) return;
+      adminPatch(u, { disabled: !u.disabled_at });
+    });
+    tdActions.appendChild(toggle);
+  }
+  tr.appendChild(tdActions);
+  return tr;
+}
+
+async function adminPatch(u, patch, okMsg = 'Saved') {
+  try {
+    await api(`/api/admin/users/${u.id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    toast(okMsg);
+  } catch (err) {
+    toast(`Save failed: ${err.message}`, true);
+  }
+  loadAdminUsers();
+}
+
+document.getElementById('admin-create').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    const { user } = await api('/api/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: f.username.value,
+        password: f.password.value,
+        can_spend: f.can_spend.checked,
+      }),
+    });
+    toast(`Created ${user.username}`);
+    f.reset();
+    loadAdminUsers();
+    loadAdminUsage();
+  } catch (err) {
+    toast(`Create failed: ${err.message}`, true);
+  }
+});
+
+let usageDays = 30;
+
+document.getElementById('usage-range').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-days]');
+  if (!btn) return;
+  usageDays = Number(btn.dataset.days);
+  document.querySelectorAll('#usage-range button').forEach((b) => b.classList.toggle('active', b === btn));
+  loadAdminUsage();
+});
+
+async function loadAdminUsage() {
+  const host = document.getElementById('admin-usage');
+  try {
+    const data = await api(`/api/admin/usage?days=${usageDays}`);
+    const table = document.createElement('table');
+    table.innerHTML = `<thead><tr>
+      <th>User</th><th class="num">Apollo credits</th><th class="num">Reveals</th>
+      <th class="num">Searches</th><th class="num">Claude calls</th>
+      <th class="num">Tokens in / out</th><th class="num">Est. Claude $</th><th>Last used</th>
+    </tr></thead>`;
+    const tbody = document.createElement('tbody');
+    for (const r of data.totals) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><b>${esc(r.username)}</b></td>
+        <td class="num">${num(r.apollo_credits)}</td>
+        <td class="num">${num(r.reveals)}</td>
+        <td class="num">${num(r.searches)}</td>
+        <td class="num">${num(r.claude_calls)}</td>
+        <td class="num">${num(r.input_tokens)} / ${num(r.output_tokens)}</td>
+        <td class="num">$${Number(r.claude_cost_usd).toFixed(2)}</td>
+        <td>${esc(dateStr(r.last_used))}</td>`;
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    host.replaceChildren(table);
+  } catch (err) {
+    host.innerHTML = `<div class="error-box">${esc(err.message)}</div>`;
+  }
+}
+
 // ---------- init ----------
 
+loadMe().catch((err) => toast(`Couldn't load your account: ${err.message}`, true));
 loadReplies();
 loadStats();
 loadTimeseries();

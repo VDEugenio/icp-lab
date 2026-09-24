@@ -5,8 +5,8 @@
 | Var | Required | What |
 |---|---|---|
 | `DATABASE_URL` | ✅ | Neon connection string **for the `icp_lab` role** (not the owner). Format: `postgresql://icp_lab:<pw>@<host>/neondb?sslmode=require&channel_binding=require` |
-| `DASHBOARD_PASSWORD_HASH` | ✅ | **Owner** password hash — output of `python backend/hash_password.py` (PBKDF2-SHA256, 600k iterations). Accepts a comma-separated list; remove a hash to revoke that password |
-| `GUEST_PASSWORD_HASH` | optional | **Guest** password hash(es), same format. Guest sessions get everything except the Gmail-backed reply scanner (endpoints 403; the Replies card hides itself). Unset → no guest access |
+| `DASHBOARD_PASSWORD_HASH` | ✅ | **Break-glass admin** password hash — output of `python backend/hash_password.py` (PBKDF2-SHA256, 600k iterations; comma-separated list OK). Logging in as `OWNER_USERNAME` with this password creates the admin account on first login, or re-enables it and resets its password if you're locked out |
+| `OWNER_USERNAME` | optional | Username of that admin account. Default `vaughn` |
 | `SESSION_SECRET` | ✅ | Long random string signing session cookies: `python -c "import secrets; print(secrets.token_hex(32))"` — use a *different* value in prod so local and prod sessions are independent |
 | `ANTHROPIC_API_KEY` | for Prospect | Claude API key (JD parsing, Haiku 4.5 — pennies per search) |
 | `APOLLO_API_KEY` | for Prospect | Apollo.io API key (people search free; reveal 1 credit/person) |
@@ -25,7 +25,7 @@ anywhere on disk.
 ```
 pip install -r requirements.txt
 copy .env.example .env      # then fill it in
-python backend/hash_password.py          # → DASHBOARD_PASSWORD_HASH
+python backend/hash_password.py          # → DASHBOARD_PASSWORD_HASH (sign in as "vaughn")
 python -m uvicorn backend.main:app --reload
 ```
 
@@ -48,6 +48,17 @@ with `InsufficientPrivilege`.
 docs/architecture.md. Both were applied to Neon in Aug 2026; a missing
 `app_settings` table degrades gracefully (`table_ready: false`, settings
 just don't persist).
+
+## User accounts (one-time SQL, then the Admin tab)
+
+Run the `users` / `usage_events` / attribution-columns block from
+[architecture.md](architecture.md#the-users--usage_events-tables-multi-user-added-2026-09)
+as the database owner **before deploying** the multi-user code (login
+needs the `users` table). Then sign in as `vaughn` with the
+`DASHBOARD_PASSWORD_HASH` password — that creates the admin account — and
+add people on the **Admin** tab: username + password, and a **can spend**
+checkbox gating Claude searches and Apollo Reveal credits. Disable a user
+there to sign them out immediately; per-user spend shows in the Usage card.
 
 ## Reply scanner setup
 
@@ -92,7 +103,8 @@ Same pattern as outreach-backend: Procfile + requirements.txt + runtime.txt.
 
 1. Push the repo to GitHub (`VDEugenio/icp-lab`, public).
 2. Railway → New Service → Deploy from GitHub repo.
-3. Set variables: `DATABASE_URL` (icp_lab role), `DASHBOARD_PASSWORD_HASH`,
+3. Set variables: `DATABASE_URL` (icp_lab role), `DASHBOARD_PASSWORD_HASH`
+   (+ `OWNER_USERNAME` if not `vaughn`),
    `SESSION_SECRET` (fresh one), `ANTHROPIC_API_KEY`, `APOLLO_API_KEY`,
    and the three `GMAIL_*` vars if the reply scanner is set up.
    Do **not** set `DEV_MODE`.
@@ -101,8 +113,7 @@ Same pattern as outreach-backend: Procfile + requirements.txt + runtime.txt.
 Notes:
 - The session cookie is `Secure` in production, so the service must be
   served over https (Railway default).
-- The login lockout counter is in-process; a redeploy resets it. Fine for
-  single-user.
+- The login lockout counters are in-process; a redeploy resets them.
 - The DB pool health-checks connections on checkout, so Neon closing idle
   connections during quiet hours doesn't produce first-request errors.
 
@@ -146,6 +157,9 @@ Notes:
 | `password authentication failed for user ...` | Username/password mismatch in `DATABASE_URL` — check the *user* is `icp_lab` and the password is the role's, not the owner's. |
 | First request after idle fails with SSL/connection error | Should not happen (checkout health check discards dead connections). If it does, Neon behavior changed — see `_checkout` in `db.py`. |
 | Login always bounces back to `/login` locally | `DEV_MODE` not set → Secure cookie dropped over http. |
+| Login 500s with `relation "users" does not exist` | The one-time multi-user SQL hasn't been run — see User accounts above. |
+| Admin locked out / forgot password | Sign in as `OWNER_USERNAME` with the `DASHBOARD_PASSWORD_HASH` password — it re-enables the account and resets its password to that hash. |
+| A user gets 403 "Spending not enabled" | Expected — tick **can spend** for them on the Admin tab. |
 | Prospect search returns empty categories | Small company: Apollo may have only a handful of people and none match the generated titles (e.g. a 4-person startup). Not a bug — check the company on Apollo directly. |
 | Prospect cards all "Reveal · 1 credit" with no direct links | Expected — Apollo obfuscates free search results; see External services. |
 | `ANTHROPIC_API_KEY is not set` / `APOLLO_API_KEY is not set` | Add the keys to `.env` (local) or Railway variables, restart. |

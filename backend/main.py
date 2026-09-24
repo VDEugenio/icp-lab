@@ -17,6 +17,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 import auth
 import queries
@@ -51,23 +52,24 @@ def health():
 # ---------- auth ----------
 
 class LoginBody(BaseModel):
+    username: str
     password: str
 
 
 @app.post("/api/login")
 def login(body: LoginBody, response: Response):
-    role = auth.check_login(body.password)
-    if role is None:
-        raise HTTPException(401, "Wrong password")
+    user = auth.check_login(body.username, body.password)
+    if user is None:
+        raise HTTPException(401, "Wrong username or password")
     response.set_cookie(
         auth.SESSION_COOKIE,
-        auth.create_session_token(role),
+        auth.create_session_token(user["id"]),
         max_age=auth.SESSION_MAX_AGE,
         httponly=True,
         secure=auth.cookie_secure(),
         samesite="lax",
     )
-    return {"ok": True, "role": role}
+    return {"ok": True, "username": user["username"]}
 
 
 @app.post("/api/logout")
@@ -76,10 +78,23 @@ def logout(response: Response):
     return {"ok": True}
 
 
-# ---------- read APIs ----------
-
 protected = [Depends(auth.require_auth)]
-owner_only = [Depends(auth.require_owner)]  # Gmail-backed reply scanner
+admin_only = [Depends(auth.require_admin)]  # Gmail reply scanner + user admin
+spend = [Depends(auth.require_spend)]  # Claude / Apollo calls (per-user toggle)
+
+
+def _uid(request: Request) -> int:
+    """Id of the signed-in user (routes are already auth-gated)."""
+    return auth.current_user(request)["id"]
+
+
+@app.get("/api/me", dependencies=protected)
+def me(request: Request):
+    u = auth.current_user(request)
+    return {"username": u["username"], "is_admin": u["is_admin"], "can_spend": u["can_spend"]}
+
+
+# ---------- read APIs ----------
 
 
 def _scope(scope: str) -> str:
@@ -158,26 +173,42 @@ class JDSearchBody(BaseModel):
     per_category: int = 15
 
 
-@app.post("/api/jd-search", dependencies=protected)
-async def jd_search(body: JDSearchBody):
+def _log_search_usage(user_id: int, usage: dict, endpoint: str):
+    """usage: {"claude": {...} | None, "apollo_searches": n} from the finders."""
+    if usage.get("claude"):
+        queries.log_usage(user_id, "claude", detail={"endpoint": endpoint}, **usage["claude"])
+    if usage.get("apollo_searches"):
+        queries.log_usage(user_id, "apollo_search",
+                          detail={"endpoint": endpoint, "calls": usage["apollo_searches"]})
+
+
+@app.post("/api/jd-search", dependencies=spend)
+async def jd_search(body: JDSearchBody, request: Request):
     if not body.job_description.strip():
         raise HTTPException(400, "job_description is empty")
     import jd_finder
 
     per_category = max(1, min(25, body.per_category))
-    return await jd_finder.find_prospects(body.job_description, per_category)
+    result = await jd_finder.find_prospects(body.job_description, per_category)
+    await run_in_threadpool(_log_search_usage, _uid(request), result.pop("usage"), "jd-search")
+    return result
 
 
 class RevealBody(BaseModel):
     id: str
 
 
-@app.post("/api/prospect-reveal", dependencies=protected)
-async def prospect_reveal(body: RevealBody):
+@app.post("/api/prospect-reveal", dependencies=spend)
+async def prospect_reveal(body: RevealBody, request: Request):
     """Spends 1 Apollo credit. Only triggered by the explicit Reveal button."""
     import jd_finder
 
-    return await jd_finder.reveal_person(body.id)
+    result = await jd_finder.reveal_person(body.id)  # raises on failure → not logged
+    await run_in_threadpool(
+        queries.log_usage, _uid(request), "apollo_reveal", credits=1,
+        detail={"apollo_id": body.id, "name": result.get("name")},
+    )
+    return result
 
 
 # ---------- work tab (persona → Apollo people search, no company scope) ----------
@@ -199,9 +230,17 @@ WORK_DEFAULTS = {
 }
 
 
+def _work_settings_key(request: Request) -> str:
+    return f"work:{_uid(request)}"
+
+
 @app.get("/api/work-settings", dependencies=protected)
-def work_settings():
-    stored = queries.get_setting("work") or {}
+def work_settings(request: Request):
+    # Per-user; the admin falls back to the pre-multi-user shared "work" row.
+    stored = queries.get_setting(_work_settings_key(request))
+    if stored is None and auth.current_user(request)["is_admin"]:
+        stored = queries.get_setting("work")
+    stored = stored or {}
     return {
         **WORK_DEFAULTS,
         **{k: v for k, v in stored.items() if k in WORK_DEFAULTS},
@@ -217,7 +256,7 @@ class WorkSettingsBody(BaseModel):
 
 
 @app.put("/api/work-settings", dependencies=protected)
-def save_work_settings(body: WorkSettingsBody):
+def save_work_settings(body: WorkSettingsBody, request: Request):
     if not queries.settings_table_ready():
         raise HTTPException(503, "app_settings table missing — run the one-time SQL in docs/architecture.md")
     value = {
@@ -226,7 +265,7 @@ def save_work_settings(body: WorkSettingsBody):
         "exclusions": [e.strip() for e in body.exclusions if e.strip()],
         "template": body.template,
     }
-    queries.set_setting("work", value)
+    queries.set_setting(_work_settings_key(request), value, _uid(request))
     return {"ok": True, **value}
 
 
@@ -239,13 +278,13 @@ class WorkSearchBody(BaseModel):
     titles: list[str] | None = None  # Load more passes the parsed titles back
 
 
-@app.post("/api/work-search", dependencies=protected)
-async def work_search(body: WorkSearchBody):
+@app.post("/api/work-search", dependencies=spend)
+async def work_search(body: WorkSearchBody, request: Request):
     if not body.persona.strip() and not body.titles:
         raise HTTPException(400, "persona is empty")
     import work_finder
 
-    return await work_finder.search(
+    result = await work_finder.search(
         body.persona,
         [l.strip() for l in body.locations if l.strip()],
         body.exclusions,
@@ -253,6 +292,8 @@ async def work_search(body: WorkSearchBody):
         page=max(1, min(500, body.page)),
         titles=body.titles or None,
     )
+    await run_in_threadpool(_log_search_usage, _uid(request), result.pop("usage"), "work-search")
+    return result
 
 
 # ---------- reply scanner (Gmail LinkedIn notifications → responded) ----------
@@ -262,9 +303,9 @@ import replies
 
 @app.get("/api/replies", dependencies=protected)
 def replies_status(request: Request):
-    # Guests never see the reply scanner: report "unconfigured" so the
+    # Non-admins never see the reply scanner: report "unconfigured" so the
     # frontend hides the card entirely (it contains Gmail snippets).
-    if auth.session_role(request) != "owner":
+    if not auth.current_user(request)["is_admin"]:
         return {"configured": False}
     return replies.status()
 
@@ -274,10 +315,10 @@ class ScanBody(BaseModel):
     auto: bool = False  # page-load scans are throttled server-side
 
 
-@app.post("/api/replies/scan", dependencies=owner_only)
-def replies_scan(body: ScanBody):
+@app.post("/api/replies/scan", dependencies=admin_only)
+def replies_scan(body: ScanBody, request: Request):
     try:
-        return replies.scan(days=max(1, min(body.days, 365)), auto=body.auto)
+        return replies.scan(_uid(request), days=max(1, min(body.days, 365)), auto=body.auto)
     except replies.ScanError as e:
         raise HTTPException(503, str(e))
 
@@ -286,17 +327,17 @@ class ReplyConfirmBody(BaseModel):
     uid: str
 
 
-@app.post("/api/replies/{gmail_id}/confirm", dependencies=owner_only)
-def reply_confirm(gmail_id: str, body: ReplyConfirmBody):
+@app.post("/api/replies/{gmail_id}/confirm", dependencies=admin_only)
+def reply_confirm(gmail_id: str, body: ReplyConfirmBody, request: Request):
     try:
-        return replies.confirm(gmail_id, body.uid)
+        return replies.confirm(gmail_id, body.uid, _uid(request))
     except LookupError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
-@app.post("/api/replies/{gmail_id}/dismiss", dependencies=owner_only)
+@app.post("/api/replies/{gmail_id}/dismiss", dependencies=admin_only)
 def reply_dismiss(gmail_id: str):
     try:
         return replies.dismiss(gmail_id)
@@ -327,7 +368,7 @@ class OutreachContactBody(BaseModel):
 
 
 @app.post("/api/outreach-contact", dependencies=protected)
-async def outreach_contact(body: OutreachContactBody):
+async def outreach_contact(body: OutreachContactBody, request: Request):
     async with _httpx.AsyncClient(timeout=20) as client:
         try:
             r = await client.post(f"{OUTREACH_BASE}/contacts", json=body.model_dump())
@@ -336,6 +377,7 @@ async def outreach_contact(body: OutreachContactBody):
     if r.status_code >= 400:
         raise HTTPException(502, f"outreach-backend error ({r.status_code}): {r.text[:200]}")
     data = r.json()
+    await run_in_threadpool(queries.stamp_contact, data["uid"], _uid(request), True)
     return {"uid": data["uid"], "tracking_url": data["tracking_url"]}
 
 
@@ -344,7 +386,7 @@ class OutreachContactedBody(BaseModel):
 
 
 @app.post("/api/outreach-contacted", dependencies=protected)
-async def outreach_contacted(body: OutreachContactedBody):
+async def outreach_contacted(body: OutreachContactedBody, request: Request):
     async with _httpx.AsyncClient(timeout=20) as client:
         try:
             r = await client.post(
@@ -354,6 +396,7 @@ async def outreach_contacted(body: OutreachContactedBody):
             raise HTTPException(502, f"outreach-backend unreachable: {type(e).__name__}")
     if r.status_code >= 400:
         raise HTTPException(502, f"outreach-backend error ({r.status_code}): {r.text[:200]}")
+    await run_in_threadpool(queries.stamp_contact, body.uid, _uid(request))
     return {"ok": True}
 
 
@@ -395,7 +438,7 @@ ENRICH_ENUMS = {
 
 
 @app.patch("/api/contacts/{uid}", dependencies=protected)
-def update_contact(uid: str, body: ContactUpdate):
+def update_contact(uid: str, body: ContactUpdate, request: Request):
     current = queries.get_contact(uid)
     if current is None:
         raise HTTPException(404, "No such contact")
@@ -432,8 +475,93 @@ def update_contact(uid: str, body: ContactUpdate):
         # date-only edit (backfilling the real response date)
         fields["responded_at"] = body.responded_at
 
-    updated = queries.update_contact(uid, fields)
+    user = auth.current_user(request)
+    updated = queries.update_contact(uid, fields, user["id"])
+    if updated is not None and fields:
+        updated["updated_by_name"] = user["username"]
     return {"contact": updated}
+
+
+# ---------- admin: user accounts + per-user usage ----------
+
+import re as _re
+
+USERNAME_RE = _re.compile(r"^[a-z0-9._-]{3,32}$")
+MIN_PASSWORD_LEN = 10
+
+# Claude Haiku 4.5 list pricing (USD per million tokens) — for the admin
+# page's estimated-cost column only; not billing.
+CLAUDE_PRICE_PER_MTOK = {"input": 1.00, "output": 5.00}
+
+
+def _check_password(pw: str):
+    if len(pw) < MIN_PASSWORD_LEN:
+        raise HTTPException(400, f"password must be at least {MIN_PASSWORD_LEN} characters")
+
+
+@app.get("/api/admin/users", dependencies=admin_only)
+def admin_users():
+    return {"users": queries.list_users()}
+
+
+class NewUserBody(BaseModel):
+    username: str
+    password: str
+    can_spend: bool = False
+
+
+@app.post("/api/admin/users", dependencies=admin_only)
+def admin_create_user(body: NewUserBody, request: Request):
+    username = body.username.strip().lower()
+    if not USERNAME_RE.match(username):
+        raise HTTPException(400, "username must be 3-32 chars: a-z, 0-9, dot, dash, underscore")
+    _check_password(body.password)
+    new_id = queries.create_user(
+        username, auth.hash_password(body.password), body.can_spend, _uid(request)
+    )
+    if new_id is None:
+        raise HTTPException(409, f"username '{username}' is taken")
+    return {"user": queries.get_user(new_id)}
+
+
+class UserUpdateBody(BaseModel):
+    can_spend: bool | None = None
+    disabled: bool | None = None
+    password: str | None = None
+
+
+@app.patch("/api/admin/users/{user_id}", dependencies=admin_only)
+def admin_update_user(user_id: int, body: UserUpdateBody, request: Request):
+    target = queries.get_user(user_id)
+    if target is None:
+        raise HTTPException(404, "No such user")
+    provided = body.model_fields_set
+    if user_id == _uid(request) and body.disabled:
+        raise HTTPException(400, "You can't disable your own account")
+    fields = {}
+    if "can_spend" in provided and body.can_spend is not None:
+        fields["can_spend"] = body.can_spend
+    if "disabled" in provided and body.disabled is not None:
+        fields["disabled_at"] = datetime.now(timezone.utc) if body.disabled else None
+    if "password" in provided and body.password is not None:
+        _check_password(body.password)
+        fields["password_hash"] = auth.hash_password(body.password)
+    queries.update_user(user_id, fields)
+    return {"user": queries.get_user(user_id)}
+
+
+@app.get("/api/admin/usage", dependencies=admin_only)
+def admin_usage(days: int = 30):
+    """days <= 0 means all time."""
+    days = min(days, 3650)
+    data = queries.usage_summary(days if days > 0 else None)
+    for row in data["totals"]:
+        row["claude_cost_usd"] = round(
+            row["input_tokens"] / 1e6 * CLAUDE_PRICE_PER_MTOK["input"]
+            + row["output_tokens"] / 1e6 * CLAUDE_PRICE_PER_MTOK["output"],
+            4,
+        )
+    return {"days": days if days > 0 else None, **data}
 
 
 # ---------- static assets (css/js only; pages are auth-gated above) ----------

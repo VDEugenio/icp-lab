@@ -25,6 +25,7 @@ from jd_finder import (
     _claude,
     _display_name,
     _linkedin_search_url,
+    claude_usage,
     infer_seniority,
     known_contacts_index,
     match_known,
@@ -50,7 +51,8 @@ PERSONA_TOOL = {
 PERSONA_SYSTEM = """You are a B2B prospecting assistant. Given a short persona describing who the user wants to reach on LinkedIn, generate realistic LinkedIn title strings for an Apollo people search. Think about what these people actually put in their profile headline, not generic catch-alls. If the persona includes qualifiers (like an industry segment or specialty), bake them into the titles where people would genuinely include them, rather than dropping them. Always call the expand_persona tool."""
 
 
-async def expand_persona(persona: str) -> list:
+async def expand_persona(persona: str) -> tuple:
+    """Returns (search titles, claude usage)."""
     try:
         resp = await _claude().messages.create(
             model=CLAUDE_MODEL,
@@ -68,7 +70,7 @@ async def expand_persona(persona: str) -> list:
     titles = [t.strip() for t in tool_use.input.get("search_titles", []) if t and t.strip()]
     if not titles:
         raise HTTPException(502, "Claude returned no search titles for this persona")
-    return titles
+    return titles, claude_usage(resp)
 
 
 def _excluded(org_name: str, exclusions: list) -> bool:
@@ -86,8 +88,9 @@ async def search(persona: str, locations: list, exclusions: list,
     """One page of work prospects. titles=None on the first call (Claude
     expands the persona); Load more passes the parsed titles back to skip
     the re-parse."""
+    usage = None
     if titles is None:
-        titles = await expand_persona(persona)
+        titles, usage = await expand_persona(persona)
 
     payload = {
         "person_titles": titles,
@@ -147,4 +150,5 @@ async def search(persona: str, locations: list, exclusions: list,
         "per_page": per_page,
         "excluded_count": excluded_count,
         "people": cards,
+        "usage": {"claude": usage, "apollo_searches": 1},
     }

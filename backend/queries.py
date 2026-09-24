@@ -1,4 +1,5 @@
-"""Analytics SQL. Read-only except update_contact.
+"""Analytics SQL. Read-only except update_contact, the attribution stamps,
+and icp-lab's own tables (app_settings, users, usage_events).
 
 Per project decisions: every row in contacts counts in denominators (no
 filtering of manual links or never-contacted rows), and visits are counted
@@ -79,7 +80,7 @@ _RETURN_COLS = (
     "seniority, departments, company_name, company_size, company_industry, "
     "city, state, country, years_at_company, premium, follower_count, "
     "connection_degree, target_role, target_company, channel, contacted_at, "
-    "purpose"
+    "purpose, created_by, updated_by, updated_at"
 )
 
 _COUNTS = """
@@ -162,29 +163,46 @@ def list_contacts(scope: str = "all"):
                c.country, c.years_at_company, c.target_role,
                c.target_company, c.channel, c.premium, c.follower_count,
                c.created_at, c.contacted_at, c.responded, c.responded_at,
-               c.outcome, c.purpose,
+               c.outcome, c.purpose, c.updated_at,
+               cu.username AS created_by_name, uu.username AS updated_by_name,
                coalesce(v.visit_count, 0) AS visit_count, v.last_visit
         FROM contacts c {_VISITS_JOIN}
+        LEFT JOIN users cu ON cu.id = c.created_by
+        LEFT JOIN users uu ON uu.id = c.updated_by
         WHERE {SCOPES[scope]}
         ORDER BY c.contacted_at DESC NULLS LAST, c.created_at DESC NULLS LAST
         """
     )
 
 
-def update_contact(uid: str, fields: dict) -> dict | None:
+def update_contact(uid: str, fields: dict, user_id: int) -> dict | None:
     """fields: outcome-recording columns and/or ENRICH_COLUMNS, already
-    validated by the API layer. Returns the updated row, or None if uid
-    doesn't exist."""
+    validated by the API layer. Every write stamps updated_by/updated_at.
+    Returns the updated row, or None if uid doesn't exist."""
     allowed = {"responded", "outcome", "responded_at"} | ENRICH_COLUMNS
     assert set(fields) <= allowed, f"unexpected fields: {set(fields) - allowed}"
     if not fields:
         return get_contact(uid)
     sets = ", ".join(f"{col} = %s" for col in fields)
     row = db.query_one(
-        f"UPDATE contacts c SET {sets} WHERE uid = %s RETURNING {_RETURN_COLS}",
-        (*fields.values(), uid),
+        f"UPDATE contacts c SET {sets}, updated_by = %s, updated_at = now()"
+        f" WHERE uid = %s RETURNING {_RETURN_COLS}",
+        (*fields.values(), user_id, uid),
     )
     return row
+
+
+def stamp_contact(uid: str, user_id: int, created: bool = False) -> None:
+    """Attribute a write made through outreach-backend (create / mark
+    contacted). created_by is set-if-unset: POST /contacts upserts by
+    linkedin_url, so an existing contact keeps its original creator."""
+    created_sql = "created_by = coalesce(created_by, %s), " if created else ""
+    params = (user_id, user_id, uid) if created else (user_id, uid)
+    db.execute(
+        f"UPDATE contacts SET {created_sql}updated_by = %s, updated_at = now()"
+        " WHERE uid = %s",
+        params,
+    )
 
 
 def get_contact(uid: str) -> dict | None:
@@ -245,11 +263,127 @@ def get_setting(key: str):
     return row["value"] if row else None
 
 
-def set_setting(key: str, value) -> None:
+def set_setting(key: str, value, user_id: int) -> None:
     from psycopg2.extras import Json
 
     db.execute(
-        """INSERT INTO app_settings (key, value, updated_at) VALUES (%s, %s, now())
-           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()""",
-        (key, Json(value)),
+        """INSERT INTO app_settings (key, value, updated_at, updated_by)
+           VALUES (%s, %s, now(), %s)
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value,
+               updated_at = now(), updated_by = EXCLUDED.updated_by""",
+        (key, Json(value), user_id),
     )
+
+
+# ---------- users + usage_events (icp-lab-owned; one-time owner SQL) ----------
+
+_ADMIN_USER_COLS = (
+    "u.id, u.username, u.is_admin, u.can_spend, u.disabled_at, u.created_at,"
+    " u.last_login_at, cb.username AS created_by_name"
+)
+
+
+def list_users():
+    """Every user with how many contacts they've added / last edited."""
+    return db.query_all(
+        f"""
+        SELECT {_ADMIN_USER_COLS},
+               (SELECT count(*) FROM contacts WHERE created_by = u.id) AS contacts_created,
+               (SELECT count(*) FROM contacts WHERE updated_by = u.id) AS contacts_last_edited
+        FROM users u LEFT JOIN users cb ON cb.id = u.created_by
+        ORDER BY u.is_admin DESC, u.created_at
+        """
+    )
+
+
+def get_user(user_id: int):
+    return db.query_one(
+        f"SELECT {_ADMIN_USER_COLS} FROM users u"
+        " LEFT JOIN users cb ON cb.id = u.created_by WHERE u.id = %s",
+        (user_id,),
+    )
+
+
+def create_user(username: str, password_hash: str, can_spend: bool, created_by: int):
+    """Returns the new user id, or None if the username is taken."""
+    row = db.query_one(
+        """
+        INSERT INTO users (username, password_hash, can_spend, created_by)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (username) DO NOTHING
+        RETURNING id
+        """,
+        (username, password_hash, can_spend, created_by),
+    )
+    return row["id"] if row else None
+
+
+# Columns update_user may set; values validated by the API layer.
+_USER_UPDATABLE = {"can_spend", "disabled_at", "password_hash"}
+
+
+def update_user(user_id: int, fields: dict) -> bool:
+    assert set(fields) <= _USER_UPDATABLE, f"unexpected fields: {set(fields) - _USER_UPDATABLE}"
+    if not fields:
+        return True
+    sets = ", ".join(f"{col} = %s" for col in fields)
+    return db.execute(
+        f"UPDATE users SET {sets} WHERE id = %s", (*fields.values(), user_id)
+    ) > 0
+
+
+def log_usage(user_id: int, kind: str, credits: int = 0, input_tokens=None,
+              output_tokens=None, model=None, detail=None) -> None:
+    """Record one billable (or billing-relevant) call. Never raises: usage
+    logging must not break the search or reveal it's recording."""
+    from psycopg2.extras import Json
+
+    try:
+        db.execute(
+            """
+            INSERT INTO usage_events
+                (user_id, kind, credits, input_tokens, output_tokens, model, detail)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (user_id, kind, credits, input_tokens, output_tokens, model,
+             Json(detail) if detail is not None else None),
+        )
+    except Exception as e:  # noqa: BLE001 — logged, deliberately swallowed
+        print(f"usage logging failed ({kind}, user {user_id}): {e!r}")
+
+
+def usage_summary(days: int | None):
+    """Per-user totals over the last `days` days (None = all time), plus a
+    daily series for the same window. Users with no usage still appear."""
+    window = "e.at >= now() - make_interval(days => %s)" if days else "TRUE"
+    params = (days,) if days else ()
+    totals = db.query_all(
+        f"""
+        SELECT u.id AS user_id, u.username,
+               coalesce(sum(e.credits), 0) AS apollo_credits,
+               count(e.id) FILTER (WHERE e.kind = 'apollo_reveal') AS reveals,
+               count(e.id) FILTER (WHERE e.kind = 'apollo_search') AS searches,
+               count(e.id) FILTER (WHERE e.kind = 'claude') AS claude_calls,
+               coalesce(sum(e.input_tokens), 0) AS input_tokens,
+               coalesce(sum(e.output_tokens), 0) AS output_tokens,
+               max(e.at) AS last_used
+        FROM users u
+        LEFT JOIN usage_events e ON e.user_id = u.id AND {window}
+        GROUP BY u.id, u.username
+        ORDER BY apollo_credits DESC, claude_calls DESC, u.username
+        """,
+        params,
+    )
+    daily = db.query_all(
+        f"""
+        SELECT date_trunc('day', e.at) AS day, u.username,
+               coalesce(sum(e.credits), 0) AS apollo_credits,
+               count(*) FILTER (WHERE e.kind = 'claude') AS claude_calls,
+               count(*) FILTER (WHERE e.kind = 'apollo_search') AS searches
+        FROM usage_events e JOIN users u ON u.id = e.user_id
+        WHERE {window}
+        GROUP BY 1, 2 ORDER BY 1, 2
+        """,
+        params,
+    )
+    return {"totals": totals, "daily": daily}

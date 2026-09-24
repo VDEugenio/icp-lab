@@ -16,12 +16,17 @@ docs (`/docs`, `/openapi.json`) are deliberately disabled.
 ## Auth
 
 ### `POST /api/login`
-Body `{"password": "..."}`. The password decides the role: a
-`DASHBOARD_PASSWORD_HASH` match → `owner`, a `GUEST_PASSWORD_HASH` match →
-`guest`. On success sets the role-carrying `icp_session` cookie (HTTP-only,
-SameSite=Lax, Secure unless `DEV_MODE`, 30 days) and returns
-`{"ok": true, "role": "owner"|"guest"}`. Wrong password → 401. After 10
-consecutive failures (shared counter) → 429 for 15 minutes.
+Body `{"username": "...", "password": "..."}`. Checks the `users` table
+(disabled users can't log in); the `OWNER_USERNAME` + `DASHBOARD_PASSWORD_HASH`
+break-glass login creates/re-enables the admin account. On success sets the
+`icp_session` cookie (carries the user id; HTTP-only, SameSite=Lax, Secure
+unless `DEV_MODE`, 30 days) and returns `{"ok": true, "username": "..."}`.
+Wrong credentials → 401. 10 failures for a username (or 50 overall) → 429
+for 15 minutes.
+
+### `GET /api/me`
+`{"username": "vaughn", "is_admin": true, "can_spend": true}` — the frontend
+uses it to show the Admin tab and disable spend-gated buttons.
 
 ### `POST /api/logout`
 Clears the cookie.
@@ -99,20 +104,24 @@ Partial update; send only the fields to change. Accepted fields:
   (`linkedin_url` can never be written — not in the model, not in the SQL
   whitelist, not in the DB grants).
 
-Returns `{"contact": {...updated row...}}`. 404 for unknown uid, 400 for
-invalid enum values, 422 for type errors.
+Every non-empty update also sets `updated_by` (the signed-in user) and
+`updated_at = now()`. Returns `{"contact": {...updated row...,
+"updated_by_name": "..."}}`. 404 for unknown uid, 400 for invalid enum
+values, 422 for type errors.
 
 ## Work tab
 
 ### `GET /api/work-settings`
-Persisted Work-tab settings merged over defaults: `{"persona", "locations",
+The signed-in user's persisted Work-tab settings (admins fall back to the
+pre-multi-user shared `work` row) merged over defaults: `{"persona", "locations",
 "exclusions", "template", "table_ready"}`. `table_ready: false` means the
 one-time `app_settings` SQL hasn't been run — the tab still works, settings
 just don't persist.
 
 ### `PUT /api/work-settings`
-Body: same four fields. Stored as one JSONB row (`key = 'work'`) in
-`app_settings`. 503 if the table is missing.
+Body: same four fields. Stored per user as one JSONB row (`key =
+'work:<user_id>'`, `updated_by` stamped) in `app_settings`. 503 if the
+table is missing.
 
 ### `POST /api/work-search`
 Body: `{"persona": "commercial insurance broker", "locations": ["United
@@ -166,7 +175,7 @@ re-computed `score`, exact-name `known` match, `"revealed": true`.
 
 All hidden (404-free, but empty/`configured: false`) until the Gmail env
 vars are set — see [operations.md](operations.md#reply-scanner-setup).
-**Owner-only**: guest sessions get `configured: false` from `GET
+**Admin-only**: non-admin sessions get `configured: false` from `GET
 /api/replies` (hiding the card) and 403 from scan/confirm/dismiss.
 
 ### `GET /api/replies`
@@ -229,3 +238,41 @@ Body `{"uid": "vc9"}`. Forwards `{"channel": "copy"}` to
 `POST {OUTREACH_BACKEND_URL}/contacts/{uid}/contacted`, which sets
 `channel` and stamps `contacted_at` (re-stamps on repeat — a known caveat
 of the whole pipeline). Returns `{"ok": true}`.
+
+Both proxies stamp the signed-in user onto the contact after outreach-backend
+succeeds: `created_by` (set-if-unset) + `updated_by`/`updated_at` for
+`outreach-contact`, `updated_by`/`updated_at` for `outreach-contacted`.
+
+## Spend gating
+
+`POST /api/jd-search`, `POST /api/work-search` and `POST /api/prospect-reveal`
+require the user's `can_spend` flag (403 `"Spending not enabled for this
+account"` otherwise). Each call logs to `usage_events`: a `claude` row
+(tokens + model) when Claude ran, an `apollo_search` row (with the number of
+Apollo calls), and for Reveal an `apollo_reveal` row with `credits: 1` —
+only when the reveal succeeded.
+
+## Admin (admin sessions only; 403 otherwise)
+
+### `GET /api/admin/users`
+`{"users": [{"id", "username", "is_admin", "can_spend", "disabled_at",
+"created_at", "last_login_at", "created_by_name", "contacts_created",
+"contacts_last_edited"}]}`.
+
+### `POST /api/admin/users`
+Body `{"username": "sam", "password": "...", "can_spend": false}`. Username
+is lowercased and must match `^[a-z0-9._-]{3,32}$`; password ≥ 10 chars.
+409 if the username is taken. Returns `{"user": {...}}`.
+
+### `PATCH /api/admin/users/{id}`
+Body any of `{"can_spend": bool, "disabled": bool, "password": "..."}`.
+Disabling sets `disabled_at` (the user is signed out on their next
+request); you can't disable yourself. Returns `{"user": {...}}`.
+
+### `GET /api/admin/usage?days=30`
+`days` ≤ 0 = all time. Returns `{"days": 30, "totals": [{"user_id",
+"username", "apollo_credits", "reveals", "searches", "claude_calls",
+"input_tokens", "output_tokens", "claude_cost_usd", "last_used"}],
+"daily": [{"day", "username", "apollo_credits", "claude_calls",
+"searches"}]}`. `claude_cost_usd` is an estimate at Haiku 4.5 list prices
+($1 / $5 per million input / output tokens).

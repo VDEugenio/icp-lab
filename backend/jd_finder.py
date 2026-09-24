@@ -98,7 +98,18 @@ SYSTEM = """You are a recruiting research assistant helping a job seeker find ou
 Think about what these people would actually put on their LinkedIn profile, not generic catch-alls. Avoid duplicates across lists. Always call the extract_jd_fields tool."""
 
 
-async def parse_jd(job_description: str) -> dict:
+def claude_usage(resp) -> dict:
+    """Token counts for usage_events (per-user spend tracking)."""
+    u = getattr(resp, "usage", None)
+    return {
+        "model": getattr(resp, "model", None) or CLAUDE_MODEL,
+        "input_tokens": getattr(u, "input_tokens", None),
+        "output_tokens": getattr(u, "output_tokens", None),
+    }
+
+
+async def parse_jd(job_description: str) -> tuple:
+    """Returns (parsed fields, claude usage)."""
     try:
         resp = await _claude().messages.create(
             model=CLAUDE_MODEL,
@@ -113,7 +124,7 @@ async def parse_jd(job_description: str) -> dict:
     tool_use = next((b for b in resp.content if b.type == "tool_use"), None)
     if tool_use is None:
         raise HTTPException(502, "Claude did not return the expected tool call")
-    return dict(tool_use.input)
+    return dict(tool_use.input), claude_usage(resp)
 
 
 # ---------- 2. Apollo people search (free — no credits) ----------
@@ -343,7 +354,7 @@ def match_known(person: dict, known: dict, company_name: str):
 # ---------- 5. Orchestration ----------
 
 async def find_prospects(job_description: str, per_category: int = PER_CATEGORY_RESULTS) -> dict:
-    parsed = await parse_jd(job_description)
+    parsed, usage = await parse_jd(job_description)
 
     async with httpx.AsyncClient() as client:
         results = await asyncio.gather(
@@ -393,7 +404,8 @@ async def find_prospects(job_description: str, per_category: int = PER_CATEGORY_
         cards.sort(key=lambda c: c["score"]["expected_click_rate"], reverse=True)
         categories.append({"key": key, "label": label, "people": cards})
 
-    return {"parsed": parsed, "company_profile": profile, "categories": categories}
+    return {"parsed": parsed, "company_profile": profile, "categories": categories,
+            "usage": {"claude": usage, "apollo_searches": len(CATEGORIES)}}
 
 
 def _display_name(p: dict) -> str:
